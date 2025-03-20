@@ -1,0 +1,332 @@
+---
+title: |
+       |
+       |
+       |
+       | MATH1307 - Forecasting 
+       |
+       |
+       |
+       | Assignment 1
+       
+author: |
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | Kavinda Goonesekere
+   | S3987368
+date: "   2023-08-11"
+output: html_document
+---
+
+<style type="text/css">
+
+h1.title {
+  font-size: 58px;
+  text-align: center;
+}
+
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 34px;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 34px;
+}
+body{
+  font-family: Helvetica;
+  font-size: 14pt;
+}
+</style>
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tseries)
+library(TSA)
+library(forecast)
+library(x12)
+library(urca)
+library(dLagM)
+library(dplyr)
+```
+
+## Introduction
+
+This report explores various implementations of Distributed Lag Models, or DLMs on a time series describing the monthly averages of ASX (Ords) Price Index. In addition to the Price Index, other predictor variables in the dataset are described below:
+
+* **Gold price (AUD):** The average price of Gold in AUD for the particular month
+* **Crude Oil (Brent, USD/bbl):** The price of crude oil in USD per barrel for the particular month
+* **Copper (USD/tonne):** The price of Copper in USD per tonne for the particular month
+
+Initially, the time series is explored and observations are made on its stationarity. Then, various transformations are applied with the intent of making the series stationary. The series is decomposed in order to identify its components, and attempts are made to remove seasonal components. Multiple DLMs are applied to the series, including the polynomial DLM, Koyck DLM, finite DLM, and Autoregressive DLM (ARDL) model. Where applicable, multiple models are created with varying values of p and/or q to identify the ideal lag parameters. Finally, the ideal models are discussed using their summaries and residuals in order to identify the model which best describes the ASX price index series.
+
+\newpage
+
+## Reading Data and Pre-processing
+
+The dataset is read in and the data types for Gold price and Copper price are changed to numeric since the existence of commas in those columns causes R to read them in as character columns initially. Then, each variable is converted to a time series object and the ASX price time series is plotted along with points denoting each month in order to identify any seasonality. However, the plot of ASX price does not suggest seasonality at the outset and it also does not seem stationary since the mean and variance of the plot seem to change over time.
+```{r warning=FALSE}
+setwd("C:/Work/Master in Analytics/Semester 2/Forecasting/Forecasting Assignment 1")
+ASX_data <- read.csv("ASX_data.csv")
+ASX_data$Gold.price <- as.numeric(gsub(",", "", ASX_data$Gold.price))
+ASX_data$Copper_USD.tonne <- as.numeric(gsub(",", "", ASX_data$Copper_USD.tonne))
+head(ASX_data)
+
+ASX_price.ts <- ts(ASX_data$ASX.price, start=c(2004,1), frequency=12)
+Gold.ts = ts(ASX_data$Gold.price, start=c(2004,1), frequency=12)
+Crude.Oil.ts = ts(ASX_data$Crude.Oil..Brent._USD.bbl, start=c(2004,1), frequency=12)
+Copper.ts = ts(ASX_data$Copper_USD.tonne, start=c(2004,1), frequency=12)
+
+plot(ASX_price.ts,ylab='Monthly averages of ASX price index',xlab='Year',type='o',
+     main = "Time series plot of monthly averages of ASX price index")
+points(y=ASX_price.ts,x=time(ASX_price.ts), pch=as.vector(season(ASX_price.ts)))
+```
+
+\newpage
+
+## Exploring Stationarity of Variables
+
+Plotting the ACF and PACF for all the variables demonstrates that they all produce similar results. All the variables demonstrate a gradually declining ACF with most peaks lying above the 95% confidence interval, and the PACF plot shows that the first lag is significant. This suggests that the series is non-stationary. The lack of peaks and troughs in the ACF and PACF plots demonstrates a lack of seasonality in the data.
+
+```{r warning=FALSE}
+par(mfrow=c(1,2))
+acf(ASX_price.ts, max.lag = 48, main="ASX Price ACF")
+pacf(ASX_price.ts, max.lag = 48, main = "ASX Price PACF")
+
+par(mfrow=c(1,2))
+acf(Gold.ts, max.lag = 48, main="Gold Price ACF")
+pacf(Gold.ts, max.lag = 48, main = "Gold Price PACF")
+
+par(mfrow=c(1,2))
+acf(Crude.Oil.ts, max.lag = 48, main="Crude Oil Price ACF")
+pacf(Crude.Oil.ts, max.lag = 48, main = "Crude Oil Price PACF")
+
+par(mfrow=c(1,2))
+acf(Copper.ts, max.lag = 48, main="Copper Price ACF")
+pacf(Copper.ts, max.lag = 48, main = "Copper Price PACF")
+
+```
+
+For further confirmation of non-stationarity in the series, an Augmented Dicky-Fuller test is performed on the ASX price series. The absolute value of the test statistic is lower than the absolute of the critical values at 1%, 5% and 10% significance levels. The p-value is also quite high (0.4286), all suggesting that the series is non-stationary due to a failure to reject the null hypothesis.
+
+To account for the case of heteroskedasticity in the data, it could be useful to confirm non-stationarity using a Phillips-Perron unit root test in addtion to the ADF test. The Phillips-Perron test produces a Z-tau test statistic of -2.2025 which is less extreme than the critical values at 1%, 5%, and 10% levels. This implies a failure to reject the null hypothesis once again, and suggests that the series is indeed non-stationary.
+
+```{r warning=FALSE}
+adf.ASX = ur.df(ASX_price.ts, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.ASX)
+pp.ASX = ur.pp(ASX_price.ts, type = "Z-tau", lags = "short")
+summary(pp.ASX)
+
+```
+\newpage
+
+## Applying Transformations to ASX Price Index 
+
+In order to make the series stationary, a log transformation is applied to the ASX price series and the transformed series is plotted. However, the transformed series looks quite similar to the original series, and this is confirmed by the subsequent ADF test which produces a p-value of 0.2168. Hence, the log transform fails to reject the null hypothesis that the series is non-stationary. 
+
+```{r warning=FALSE}
+# Trying a log transformation to make the series stationary
+log_ASX = log(ASX_price.ts)
+plot(log_ASX,ylab='Log of monthly averages of ASX price index',xlab='Year',type='o',
+     main = "Time series plot of log of monthly averages of ASX price index")
+adf.test(log_ASX)
+```
+
+Another avenue to make the series stationary is through differencing. The first and second-order differences of the ASX price index are obtained and plotted. Both differences seem to even out the series a bit compared to the original, and this is further confirmed by performing ADF tests for both differenced series. The first-order differenced series produces a p-value of 0.09518, which is lower than the p-value for the original series, but still not enough to reject the null hypothesis of non-stationarity. However, the second-order differenced series produces a p-value of 0.01945 for the ADF test, effectively rejecting the null hypothesis for non-stationarity. Therefore, it is possible to suggest that the second-order differenced series for the ASX price index is stationary.
+
+However, plotting the ACF and PACF plots for the second-order differenced series shows most of the peaks lying beyond the 95% confidence interval for the ACF plot and a few significant peaks for the PACF plot. This implies that the series is not truly stationary after all. This is further corroborated by performing a Phillips-Perron test on the second-order differenced series, which produces a Z-tau of -0.1205. Since this value is less extreme than the critical values at 1%, 5%, and 10% significant levels, the null hypothesis cannot be rejected, and the series is still assumed to be non-stationary.
+
+```{r warning=FALSE}
+# Trying a first-order differencing transformation to make the series stationary
+diff1_ASX = diff(ASX_price.ts, differences = 1, lag = 12)
+plot(diff1_ASX,ylab='First-order difference for the ASX price index',xlab='Year',type='o',
+     main = "Time series plot of the first-order difference of monthly ASX price index")
+adf.test(diff1_ASX)
+
+# Trying a second-order differencing transformation to make the series stationary
+diff2_ASX = diff(ASX_price.ts, differences = 2, lag = 12)
+plot(diff2_ASX,ylab='Second-order difference for ASX price index',xlab='Year',type='o',
+     main = "Time series plot of the second-order difference of monthly ASX price index")
+adf.test(diff2_ASX)
+
+par(mfrow=c(1,2))
+acf(diff2_ASX, max.lag = 48, main="Second-order differenced ACF")
+pacf(diff2_ASX, max.lag = 48, main = "Second-order differenced PACF")
+
+pp.ASX = ur.pp(diff2_ASX, type = "Z-tau", lags = "short")
+summary(pp.ASX)
+```
+
+\newpage
+
+## Verifying Seasonality
+
+The seasonal components of the ASX price index series are explored using the X-12 ARIMA and stl functions. The seasonally adjusted series obtained from the X-12 function is almost identical to the original series, suggesting that there is not much of a seasonal component to the series. This is further corroborated by the results of the STL function, which does manage to isolate a seasonal component. However, the relative magnitude of the seasonal component compared to the trend and data is much smaller when comparing the plots using the range bars on the right-hand side. This suggests that only a very small component of the data can be explained by seasonal effects.
+
+This is further confirmed by using the seasadj() function to obtain a seasonally adjusted series for ASX price, which looks almost identical to the original series. Plotting the ACF and PACF functions for the seasonally adjusted series produces significant peaks with a gradual decline, suggesting that the seasonal adjustments did not affect the non-stationarity of the series. 
+
+```{r warning=FALSE}
+# Decomposing and adjusting seasonality
+
+decomp_ASX_x12 = x12(ASX_price.ts)
+plot(decomp_ASX_x12, sa=TRUE, trend=TRUE)
+
+decomp_ASX = stl(ASX_price.ts, t.window = 12, s.window = "periodic", robust=TRUE)
+plot(decomp_ASX)
+
+ASX_seasadj = seasadj(decomp_ASX)
+plot(ASX_seasadj, main = "Seasonally adjusted ASX price index")
+
+par(mfrow=c(1,2))
+acf(ASX_seasadj, max.lag = 48, main="Seasonally adjusted ACF")
+pacf(ASX_seasadj, max.lag = 48, main = "Seasonally adjusted PACF")
+
+```
+
+\newpage
+
+## Correlating Predictor Variables with Dependent Variable
+
+Certain Distributed Lag Models allow for modelling with multiple predictor variables while others only allow a singe predictor variable to be used. The models which allow multiple predictors are finite DLMs and ARDLs, while polynomial DLMs and Koyck DLMs only support a single predictor variable. For the latter case, it is important to choose a suitable predictor variable when modelling with only a single predictor variable. This should ideally be the predictor variable that is most closely correlated with the dependent variable. To obtain an idea of the relationship between predictor variables and the independent variable, the ASX price index is scaled and plotted along with each of the scaled predictor variables. 
+
+Gold price seems to follow the overall trend of the series but does not follow the peaks and troughs. Crude oil prices seem to follow the time series better than Gold price, and Copper price seems to follow the ASX price index even more closely than Crude oil price. However, none of the variables seem to explain the relative drop in ASX price between 2010 and 2014.
+
+```{r warning=FALSE}
+ASX_data.ts <- ts(ASX_data[,1:2], start=c(2004,1), frequency=12)
+ASX_data_scaled = scale(ASX_data.ts)
+plot(ASX_data_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("ASX Price", "Gold Price (AUD)"))
+
+ASX_data.ts <- ts(ASX_data[,c(1,3)], start=c(2004,1), frequency=12)
+ASX_data_scaled = scale(ASX_data.ts)
+plot(ASX_data_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("ASX Price", "Crude Oil (Brent, USD/bbl)"))
+
+ASX_data.ts <- ts(ASX_data[,c(1,4)], start=c(2004,1), frequency=12)
+ASX_data_scaled = scale(ASX_data.ts)
+plot(ASX_data_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("ASX Price", "Copper (USD/tonne)"))
+```
+
+Since a visual confirmation of the correlation between predictor and dependent variables is insufficient, the variables can be correlated using the cor() function in order to obtain a numerical representation of correlation. Obtaining the correlation values shows that Copper price is the most closely correlated with ASX price, with a value of 0.56, Crude oil and Gold price have correlation values of 0.33 and 0.34, respectively. Even though a correlation of 0.56 is not particularly high, Copper price is used as the predictor variable in the Koyck and polynomial DLM implementations since Copper price is the most highly correlated variable with ASX price.
+
+```{r warning=FALSE}
+ASX_data.ts = ts(ASX_data, start=c(2004,1), frequency=12)
+
+#correlate variables
+cor(ASX_data.ts)
+
+```
+
+\newpage
+
+## Fitting Distributed Lag Models 
+
+### Polynomial DLM
+
+A polynomial DLM is first fitted using the polyDlm() function, using Copper price as a predictor variable to predict ASX price. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10, and a polynomial order of 2.
+
+```{r warning=FALSE}
+#PolyDLM (Copper Price)
+finiteDLMauto(x = as.vector(Copper.ts), y = as.vector(ASX_price.ts), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(Copper.ts), y = as.vector(ASX_price.ts), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+```
+
+The summary of the polynomial DLM model shows a low p-value of 7.739e-07, which suggests that the model is significant. However, a low R-squared value of 0.1741 means that the model does not explain the data well. Additionally, only the z value at t is significant, while the first and second lags are not significant and do not act as suitable predictors for ASX price.
+
+The Breusch-Godfrey test for serial correlation produces a low p-value of 2.2e-16, which means that there is evidence of serial correlation in the model, making it less suitable to model ASX price. 
+
+Analysing the residuals for the polynomial model shows that the residuals are relatively large and are not normally distributed, suggesting that the model does not account for the data well and the errors in the model are not random. The ACF plot also shows peaks above the 95% confidence interval, suggesting that this is an inadequate model to describe ASX price.
+
+### Koyck (Geometric) DLM
+
+```{r warning=FALSE}
+# Kocyk (Copper Price)
+model.Koyck = koyckDlm(x = as.vector(Copper.ts), y = as.vector(ASX_price.ts), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+```
+
+A Koyck DLM is fitted using the koyckDlm() function, using Copper price as a predictor variable to predict ASX price. The summary of the Koyck model shows a very low p-value of 2.2e-16, which suggests that the model is significant. A high R-squared value of 0.9479 reveals that the model explains most of the data well. 
+
+The first lag of the Y value is significant but the X value at t is not significant, meaning that the X value at t is not a suitable predictor for ASX price. 
+
+The Ljung-Box test produces a high p-value of 0.7953, failing to reject the null hypothesis of independently distributed data. Therefore, it is possible to conclude that there is no serial correlation in the model.
+
+Analysing the residuals for the Koyck model shows that the residuals are relatively small compared to the polynomial model and are roughly normally distributed, suggesting that the model accounts for the data well and the errors in the model are random. The ACF plot shows that the peaks are all within the 95% confidence interval, suggesting that this is an adequate model to describe ASX price.
+
+\newpage
+
+### Finite DLM
+
+```{r warning=FALSE}
+# Finite DLM
+finiteDLMauto(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl, data = ASX_data, q.min = 1, q.max = 10,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm = dlm(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = ASX_data , q = 10)
+summary(model.dlm)
+checkresiduals(model.dlm$model)
+```
+A finite DLM is fitted using the dlm() function. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10.
+
+The summary of the finite DLM shows a low p-value of 0.001225, which suggests that the model is significant. However, a low R-squared value of 0.2065 means that the model does not explain the data well. None of the predictor variables or their lags are significant, meaning that none of the lag components are satisfactory predictors of ASX price.
+
+The Breusch-Godfrey test for serial correlation produces a low p-value of 6.964e-14, which means that there is evidence of serial correlation in the model, making it less suitable to model ASX price. 
+
+Analysing the residuals for the finite DLM shows that the residuals are relatively large and are not normally distributed, suggesting that the model does not account for the data well and the errors in the model are not random. The ACF plot also shows peaks above the 95% confidence interval, suggesting that this is an inadequate model to describe ASX price.
+
+\newpage
+
+### ARDL Model
+
+```{r warning=FALSE}
+#ARDL
+columns = c("p","q","AIC","BIC") 
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:10){
+  for(j in 1:10){
+    model.ARDL = ardlDlm(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = ASX_data, p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL <- ardlDlm(formula = ASX.price ~ Gold.price + Crude.Oil..Brent._USD.bbl + Copper_USD.tonne, data = ASX_data, p = 10, q = 2)
+summary(model.ARDL)
+checkresiduals(model.ARDL$model)
+
+```
+
+An ARDL model is fitted using the ardlDlm() function. Prior to fitting, the ideal lag value for the independent series (p) and the ideal lag value for the dependent series (q) are found by looping through multiple iterations, creating a new model with unique p and q values each time. The AIC and BIC errors are calculated for each model and used to determine the suitability of each model. The results of this procedure  suggest that the ideal value for p is 10 and the ideal value for q is 2.
+
+The summary of the ARDL model shows a very low p-value of 2.2e-16, which suggests that the model is significant. A high R-squared value of 0.9492 makes it marginally better than the Koyck model and reveals that the model explains most of the data well. 
+
+The Gold price at t, as well as its 5th and 7th lags are significant. The 5th and 8th lags of crude oil price are also significant. Furthermore, none of the Copper price lags are significant.
+
+The Breusch-Godfrey test produces a high p-value of 0.1689, failing to reject the null hypothesis of independently distributed data. Therefore, it is possible to conclude that there is no serial correlation in the model.
+
+Analysing the residuals for the ARDL model shows that the residuals are relatively small compared to the even the Koyck model and are roughly normally distributed, suggesting that the model accounts for the data well and the errors in the model are random. The ACF plot shows that the peaks are mostly within the 95% confidence interval, suggesting that this is an adequate model to describe ASX price.
+
+\newpage
+
+## Conclusion
+
+The methods explored in this report explored the characteristics of the ASX price index time series data as well as its predictor variables, which included Gold price, Crude oil price, and Copper price. It was discovered that the ASX price index was non-stationary in nature, and multiple attempts to transform the series using log transformations, differencing, and seasonal adjustments failed to effectively make the series stationary. Further exploration of the seasonal components of the ASX price index revealed that the seasonal component of the series is negligible compared to its trend and remainder components. Finally, various Distributed Lag Models, including the polynomial DLM, Koyck DLM, finite DLM, and ARDL model, were fitted to the time series and their summaries and residuals were interpreted. Analysing the diagnostics from each model revealed that, for the ASX price index series, the ARDL model was the best overall due to its goodness of fit and the lack of serial correlation in the model. The Koyck model was a close second for the same reasons but had a slightly less significant p-value and slightly higher residuals compared to the ARDL model. Both the polynomial and finite DLM models proved inadequate to describe the series due to low goodness of fit, the existence of serial correlation in the model, high residuals, and non-normal residual distributions.
