@@ -1,0 +1,1880 @@
+---
+title: |
+       |
+       |
+       |
+       | MATH1307 - Forecasting 
+       |
+       |
+       |
+       | Final Project
+       
+author: |
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | Kavinda Goonesekere
+   | S3987368
+date: "2023-09-27"
+output: html_document
+---
+
+<style type="text/css">
+
+h1.title {
+  font-size: 58px;
+  text-align: center;
+}
+
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 34px;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 34px;
+}
+body{
+  font-family: Helvetica;
+  font-size: 14pt;
+}
+</style>
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tseries)
+library(TSA)
+library(forecast)
+library(x12)
+library(urca)
+library(dLagM)
+library(dplyr)
+library(car)
+library(dynlm)
+library(Hmisc)
+library(xts)
+library(dplyr)
+library(kableExtra)
+
+```
+
+## Introduction
+
+This report describes the implementation of three data analysis tasks, where multiple forecasting models are created for each and the ideal model chosen based on appropriate test statistics. The three tasks are described below:
+
+* **Task 1:** Implementing multiple time series regression models, state space models, and exponential smoothing models to create 4 weeks ahead forecasts for weekly mortality rates in France in terms of R squared, AIC, BIC, and MASE. Each model is to be validated using the appropriate test statistics and the best model is chosen. **Dynamic linear models were not explored in this report since there was no obvious intervention point in the time series for the variables.**
+* **Task 2:** Implementing multiple time series regression models, state space models, and exponential smoothing models to create 4 years ahead forecasts for first flowering days (FFD) for in terms of R squared, AIC, BIC, and MASE. Each model is to be validated using the appropriate test statistics and the best model is chosen.**Dynamic linear models were not explored in this report since there was no obvious intervention point in the time series for the variables.**
+* **Task 3:** Exploring the Rank-based Order similarity metric  and climate conditions by implementing various forecasting models, including time series regression models, state space models, and exponential smoothing models to create 3 years ahead forecasts for the Rank-based Order similarity metric  (RBO) in terms of R squared, AIC, BIC, and MASE. Each model is to be validated using the appropriate test statistics and the best model is chosen.
+
+
+\newpage
+## Task 1
+
+## Reading Data and Pre-processing
+
+The dataset is read in and each variable is converted to a time series object. All the series are plotted and each series is seen to be roughly stationary with seasonal peaks.
+
+```{r warning=FALSE}
+setwd("C:/Work/Master in Analytics/Semester 2/Forecasting/Forecasting Final Assignment")
+mortdata <- read.csv("mort.csv")
+head(mortdata)
+
+mortality <- ts(mortdata$mortality, start=c(2010,1), frequency=52)
+temp <- ts(mortdata$temp, start=c(2010,1), frequency=52)
+chem1 <- ts(mortdata$chem1, start=c(2010,1), frequency=52)
+chem2 <- ts(mortdata$chem2, start=c(2010,1), frequency=52)
+particle.size <- ts(mortdata$particle.size, start=c(2010,1), frequency=52)
+
+
+plot(mortality, ylab='Weekly averages of mortality rates',xlab='Year',
+     main = "Time series plot of weekly averages of mortality rates")
+
+plot(temp, ylab='Weekly averages of temperature',xlab='Year',
+     main = "Time series plot of weekly averages of temperature")
+
+plot(chem1, ylab='Weekly averages of chemical 1',xlab='Year',
+     main = "Time series plot of weekly averages of chemical 1")
+
+plot(chem2, ylab='Weekly averages of chemical 2',xlab='Year',
+     main = "Time series plot of weekly averages of chemical 2")
+
+plot(particle.size, ylab='Weekly averages of particle size',xlab='Year',
+     main = "Time series plot of weekly averages of particle size")
+
+```
+
+\newpage
+
+## Exploring Stationarity of Variables
+
+Plotting the ACF and PACF for the series demonstrates similar results for all variables. All variables demonstrate a gradually decreasing ACF plot , with most peaks lying above the 95% confidence interval, and the PACF plot shows multiple significant lags. This suggests that the series is non-stationary. 
+
+```{r warning=FALSE}
+
+par(mfrow=c(1,2))
+acf(mortality, max.lag = 24, main="Mortality ACF")
+pacf(mortality, max.lag = 24, main = "Mortality PACF")
+
+par(mfrow=c(1,2))
+acf(temp, max.lag = 24, main="Temperature ACF")
+pacf(temp, max.lag = 24, main = "Temperature PACF")
+
+par(mfrow=c(1,2))
+acf(chem1, max.lag = 24, main="Chemical 1 ACF")
+pacf(chem1, max.lag = 24, main = "Chemical 1 PACF")
+
+par(mfrow=c(1,2))
+acf(chem2, max.lag = 24, main="Chemical 2 ACF")
+pacf(chem2, max.lag = 24, main = "Chemical 2 PACF")
+
+par(mfrow=c(1,2))
+acf(particle.size, max.lag = 24, main="Particle Size ACF")
+pacf(particle.size, max.lag = 24, main = "Particle Size PACF")
+
+```
+
+For further confirmation of non-stationarity in the series, an Augmented Dicky-Fuller test and Phillips-Perron unit root test are performed on the series, the results of which are given below: 
+
+* **Mortality:** For the ADF test, the low p-value and low absolute value of the critical value compared to the critical values at 1%, 5%, and 10% significance levels, signify that the series is stationary. However, the Phillip's Perron unit test produces a z tau value that is more extreme than the critical values, signifying that the data is non-stationary since the null hypothesis cannot be rejected.
+* **Temperature:** For the ADF test, the low p-value and low absolute value of the critical value compared to the critical values at 1%, 5%, and 10% significance levels, signify that the series is stationary. However, the Phillip's Perron unit test produces a z tau value that is more extreme than the critical values, signifying that the data is non-stationary since the null hypothesis cannot be rejected.
+* **Chemical 1:** For the ADF test, the absolute value of the critical value is higher compared to the critical values at 5%, and 10% significance levels, signifying that the series is non-stationary since the null hypothesis cannot be rejected. The Phillip's Perron unit test produces a z tau value that is more extreme than the critical values, signifying that the data is non-stationary since the null hypothesis cannot be rejected.
+* **Chemical 2:** For the ADF test, the low p-value and low absolute value of the critical value compared to the critical values at 1%, 5%, and 10% significance levels, signify that the series is stationary. However, the Phillip's Perron unit test produces a z tau value that is more extreme than the critical values, signifying that the data is non-stationary since the null hypothesis cannot be rejected.
+* **Particle Size** For the ADF test, the low p-value and low absolute value of the critical value compared to the critical values at 1%, 5%, and 10% significance levels, signify that the series is stationary. However, the Phillip's Perron unit test produces a z tau value that is more extreme than the critical values, signifying that the data is non-stationary since the null hypothesis cannot be rejected.
+
+```{r warning=FALSE}
+
+adf.mortality = ur.df(mortality, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.mortality)
+pp.mortality = ur.pp(mortality, type = "Z-tau", lags = "short")
+summary(pp.mortality)
+
+adf.temp = ur.df(temp, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.temp)
+pp.temp = ur.pp(temp, type = "Z-tau", lags = "short")
+summary(pp.temp)
+
+adf.chem1 = ur.df(chem1, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.chem1)
+pp.chem1 = ur.pp(chem1, type = "Z-tau", lags = "short")
+summary(pp.chem1)
+
+adf.chem2 = ur.df(chem2, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.chem2)
+pp.chem2 = ur.pp(chem2, type = "Z-tau", lags = "short")
+summary(pp.chem2)
+
+adf.particle.size = ur.df(particle.size, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.particle.size)
+pp.particle.size = ur.pp(particle.size, type = "Z-tau", lags = "short")
+summary(pp.particle.size)
+
+```
+\newpage
+
+## Applying Transformations to Mortality 
+
+Log transformations are performed to the series to see if any improvements occur to the Phillips Perron test. Only the differencing causes the Philips Perron root test to produce a less extreme critical value compared to the critical values at 1%, 5%, and 10% significance levels.
+
+```{r warning=FALSE}
+
+# Trying a log transformation to make the series stationary
+log.mortality = log(mortality)
+plot(log.mortality,ylab='Log of weekly averages of mortality rates',xlab='Year',type='o',
+     main = "Time series plot of log of weekly averages of mortality rates")
+pp.log = ur.pp(log.mortality, type = "Z-tau", lags = "short")
+summary(pp.log)
+
+# Trying a Box Cox transformation to make the series stationary
+bc.mortality = BoxCox.ar(mortality)
+bc.mortality$ci
+bc.mortality = BoxCox(mortality, lambda = 1.05)
+plot(bc.mortality, ylab='Log of weekly averages of mortality rates',xlab='Year',type='o',
+     main = "Time series plot of log of weekly averages of mortality rates")
+pp.bc = ur.pp(bc.mortality, type = "Z-tau", lags = "short")
+summary(pp.bc)
+
+# Trying a first-order differencing transformation to make the series stationary
+diff1.mortality = diff(mortality, differences = 1, lag = 52)
+plot(diff1.mortality, ylab='First-order difference for mortality rates', xlab='Year', type='o',
+     main = "Time series plot of the first-order difference of weekly mortality rates")
+pp.diff1 = ur.pp(diff1.mortality, type = "Z-tau", lags = "short")
+summary(pp.diff1)
+
+# Trying a second-order differencing transformation to make the series stationary
+diff2.mortality = diff(mortality, differences = 2, lag = 52)
+plot(diff2.mortality, ylab='Second-order difference for mortality rates', xlab='Year', type='o',
+     main = "Time series plot of the second-order difference of weekly mortality rates")
+pp.diff2 = ur.pp(diff2.mortality, type = "Z-tau", lags = "short")
+summary(pp.diff2)
+
+```
+
+\newpage
+
+## Verifying Seasonality
+
+The seasonal components of the series are explored using the STL function. The results are interpreted below:
+
+* **Mortality:** The results of the STL function show a sizable seasonal component in the mortality series with a rise and fall roughly occurring every year. There does not seem to be any discernible trend.
+* **Temperature:** The results of the STL function show a sizable seasonal component in the temperature series with a rise and fall roughly occurring every year. There does not seem to be any discernible trend but the trend component is much larger than the other components.
+* **Chemical 1:** The results of the STL function show a seasonal component in the Chemical 1 series with a rise and fall roughly occurring every year. There seems to be a decreasing trend overall in the series.
+* **Chemical 2:** The results of the STL function show a seasonal component in the Chemical 2 series with a rise and fall roughly occurring every year. There seems to be a decreasing trend overall in the series.
+* **Particle Size** The results of the STL function show a seasonal component in the particle size series with a rise and fall roughly occurring every year. There seems to be a decreasing trend overall in the series till 2015 and then increases till 2020.
+
+```{r warning=FALSE}
+# mortality: decomposing 
+
+decomp_mortality = stl(mortality, t.window = 52, s.window = "periodic", robust=TRUE)
+plot(decomp_mortality)
+
+# temperature: decomposing 
+
+decomp_temp = stl(temp, t.window = 52, s.window = "periodic", robust=TRUE)
+plot(decomp_temp)
+
+# chem1: decomposing 
+
+decomp_chem1 = stl(chem1, t.window = 52, s.window = "periodic", robust=TRUE)
+plot(decomp_chem1)
+
+# chem2: decomposing 
+
+decomp_chem2 = stl(chem2, t.window = 52, s.window = "periodic", robust=TRUE)
+plot(decomp_chem2)
+
+# particle size: decomposing 
+
+decomp_particle.size = stl(particle.size, t.window = 52, s.window = "periodic", robust=TRUE)
+plot(decomp_particle.size)
+
+```
+
+\newpage
+
+## Correlating Predictor Variables with Dependent Variable
+
+The correlations between the predictor series and the mortality series can be visually determined by plotting the scaled series together on the same plot, so the predictor series are scaled and plotted along with the scaled mortality series. 
+
+* **Temperature:** Temperature and mortality seem to have an opposite relationship; whenever temperature rises, mortality rates fall, and vice-versa.
+* **Chemical 1:** Chemical 1 and mortality seem to have a relationship where mortality trends seem to closely follow Chemical 1 trends.
+* **Chemical 2:** Chemical 2 and mortality seem to have a relationship where mortality trends seem to closely follow Chemical 2 trends.
+* **Particle Size** Particle size and mortality seem to have a relationship where mortality trends seem to closely follow particle size trends.
+
+```{r warning=FALSE}
+mortdata.ts <- ts(mortdata[,c(2,3)], start=c(2010,1), frequency=52)
+mortdata_scaled = scale(mortdata.ts)
+plot(mortdata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("Mortality", "Temperature"))
+
+mortdata.ts <- ts(mortdata[,c(2,4)], start=c(2010,1), frequency=52)
+mortdata_scaled = scale(mortdata.ts)
+plot(mortdata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("Mortality", "Chemical 1"))
+
+mortdata.ts <- ts(mortdata[,c(2,5)], start=c(2010,1), frequency=52)
+mortdata_scaled = scale(mortdata.ts)
+plot(mortdata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("Mortality", "Chemical 2"))
+
+mortdata.ts <- ts(mortdata[,c(2,6)], start=c(2010,1), frequency=52)
+mortdata_scaled = scale(mortdata.ts)
+plot(mortdata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("Mortality", "Particle Size"))
+
+```
+
+Since a visual confirmation of the correlation between predictor and dependent variables is insufficient, the variables can be correlated using the cor() function in order to obtain a numerical representation of correlation. Obtaining the correlation values shows that particle size and chemical 1 are highly positively correlated with a correlation of 0.866, and the most negatively correlated variable pair are temperature and mortality, with a value of -0.439.
+
+```{r warning=FALSE}
+
+#correlate variables
+mortdata.ts <- ts(mortdata[,2:6], start=c(2010,1), frequency=52)
+cor(mortdata.ts)
+
+```
+
+\newpage
+
+## Fitting Distributed Lag Models 
+
+### Polynomial DLM
+
+A polynomial DLM is first fitted using the polyDlm() function, using each predictor variable to predict mortality rates. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10, and a polynomial order of 2.
+
+```{r warning=FALSE}
+
+#PolyDLM 
+finiteDLMauto(x = as.vector(temp), y = as.vector(mortality), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(temp), y = as.vector(mortality), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+MASE(model.poly)
+
+finiteDLMauto(x = as.vector(chem1), y = as.vector(mortality), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(chem1), y = as.vector(mortality), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+MASE(model.poly)
+
+finiteDLMauto(x = as.vector(chem2), y = as.vector(mortality), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(chem2), y = as.vector(mortality), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+MASE(model.poly)
+
+finiteDLMauto(x = as.vector(particle.size), y = as.vector(mortality), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(particle.size), y = as.vector(mortality), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+MASE(model.poly)
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(kableExtra)
+
+models <- c("Mortality~Temperature", "Mortality~Chemical1", "Mortality~Chemical2", "Mortality~ParticleSize" )
+p <- c("2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16")
+rsq <- c("0.3558", "0.5724", "0.1384", "0.4323")
+bg <- c("2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16")
+MASE <- c("1.176", "0.934", "1.354", "1.082")
+
+s<- data.frame(cbind(models, p, rsq, bg, MASE))
+colnames(s)<- c("**Model**", "**Model p-value**", "**R-squared**", "Breusch-Godfrey p-value", "**MASE**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+The test statistics for the models demonstrate that chemical 1 is the best predictor for mortality when considering polynomial models due to its relatively low MASE value 0.934 and relatively high R-squared value of 0.5724 which suggests that this model explains the data the best. All the models have a Breusch-Godfrey p-value of 2.2e-16, which implies serial correlaton in the data since the null hypothesis is rejected for this test.
+
+### Koyck (Geometric) DLM
+
+```{r warning=FALSE}
+# Kocyk 
+model.Koyck = koyckDlm(x = as.vector(temp), y = as.vector(mortality), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+MASE(model.Koyck)
+
+model.Koyck = koyckDlm(x = as.vector(chem1), y = as.vector(mortality), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+MASE(model.Koyck)
+
+model.Koyck = koyckDlm(x = as.vector(chem2), y = as.vector(mortality), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+MASE(model.Koyck)
+
+model.Koyck = koyckDlm(x = as.vector(particle.size), y = as.vector(mortality), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+MASE(model.Koyck)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(kableExtra)
+
+models <- c("Mortality~Temperature", "Mortality~Chemical1", "Mortality~Chemical2", "Mortality~ParticleSize" )
+p <- c("2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16")
+rsq <- c("0.4048", "0.653", "0.5001", "0.4323")
+bg <- c("2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16")
+MASE <- c("1.141", "0.871", "1.354", "1.038")
+
+s<- data.frame(cbind(models, p, rsq, bg, MASE))
+colnames(s)<- c("**Model**", "**Model p-value**", "**R-squared**", "Breusch-Godfrey p-value", "**MASE**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+
+Once again, the test statistics for the models demonstrate that chemical 1 is the best predictor for mortality when considering polynomial models due to its relatively MASE value 0.871 and relatively high R-squared value of 0.653 which suggests that this model explains the data the best. It also improves upon the polynomial models that were tested prior to this. All the models have a Breusch-Godfrey p-value of 2.2e-16, which implies serial correlaton in the data since the null hypothesis is rejected for this test.
+
+\newpage
+
+### Finite DLM
+
+```{r warning=FALSE}
+# Finite DLM
+finiteDLMauto(formula = mortality ~ temp + chem1 + chem2 + particle.size, data = mortdata, q.min = 1, q.max = 10,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm = dlm(formula = mortality ~ temp + chem1 + chem2 + particle.size, data = mortdata , q = 8)
+summary(model.dlm)
+checkresiduals(model.dlm$model)
+MASE(model.dlm)
+```
+A finite DLM is fitted using the dlm() function. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 8.
+
+The summary of the finite DLM shows a low p-value of 2.2e-16, which suggests that the model is not significant. Additionally, a low R-squared value of 0.6192 means that the model explains the data decently well. The first and second lags of temperature, the second lag of chemical 2, and the particle size at t are significant.
+
+The Breusch-Godfrey test for serial correlation produces a low p-value of 2.2e-16, which means that there is evidence of serial correlation in the model, making it less suitable to model mortality rates. 
+
+Analysing the residuals for the finite DLM shows that the residuals are normally distributed, suggesting that the model may account for the data well and the errors in the model are random. The ACF plot also shows peaks above the 95% confidence interval, with the the first few peaks/lags being the largest. 
+
+The MASE of the DLM model is seen to be 0.847, a marginal improvement over the polynomial model.
+
+\newpage
+
+### ARDL Model
+
+```{r warning=FALSE}
+#ARDL
+columns = c("p","q","AIC","BIC") 
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:10){
+  for(j in 1:10){
+    model.ARDL = ardlDlm(formula = mortality ~ temp + chem1 + chem2 + particle.size, data = mortdata, p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL <- ardlDlm(formula = mortality ~ temp + chem1 + chem2 + particle.size, data = mortdata, p = 2, q = 10)
+summary(model.ARDL)
+checkresiduals(model.ARDL$model)
+MASE(model.ARDL)
+
+```
+
+An ARDL model is constructed using the ardlDlm() function. Before fitting the model, the optimal lag value for the independent series (p) and the optimal lag value for the dependent series (q) are determined through a process of multiple iterations. In each iteration, a new model is created with different p and q values. The AIC and BIC errors are computed for each model to assess their suitability. Based on the outcomes of this procedure, it is recommended that the optimal value for p is 2, while the optimal value for q is 10.
+
+The summary of the ARDL model shows a very low p-value of 2.2e-16, which suggests that the model is significant. A relatively high R-squared value of 0.7447 makes it better than the Koyck and polynomial models and reveals that the model explains most of the data better. 
+
+The following lags are significant:
+
+* Temperature at t, its first lag, and its second lag
+* Chemical 1 at its first and second lags.
+* Particle size at t
+* Mortality at its first and second lags.
+
+The Breusch-Godfrey test produces a high p-value of 0.05245, which fails to reject the null hypothesis of independently distributed data. Therefore, it is possible to conclude that there is no serial correlation in the model.
+
+Analysing the residuals for the ARDL model shows that the residuals are relatively small compared to the Koyck and polynomial models and are roughly normally distributed, suggesting that the model accounts for the data well and the errors in the model are random. The ACF plot shows that most of the peaks are within the 95% confidence interval, with 2 peaks lying outside the interval. Finally, the MASE of 0.724 is observed to be an improvement on the previous models tested so far.
+
+\newpage
+
+## Exponential Smoothing Models
+
+A simple exponential smoothing model, a Holt’s linear trend model, and a Holt’s linear trend model with additive damped trend are implemented using the mortality series. Models that take into account seasonal components are not considered due to the weekly nature of the time series data.
+
+The three above models are created for the mortality series using the ses() and holt() functions and a zoomed view of the forecast is plotted to obtain a better view regarding the trend.
+
+The results of the point forecasts show that the Holt’s linear trend model predicts slightly higher mortality rates compared to the other two models, and the forecasts for SES and the additive damped trend model are quite similar. This causes the forecast plot for the SES model to be covered by the additive damped trend model.
+
+```{r warning=FALSE}
+fit1.ses <- ses(mortality, initial="simple", h=4)
+summary(fit1.ses)
+checkresiduals(fit1.ses)
+
+fit2.holt <- holt(mortality, initial="simple", h=4) 
+summary(fit2.holt)
+checkresiduals(fit2.holt)
+
+fit3.holt <- holt(mortality, damped=TRUE, initial="simple", h=4) # Fit with additive damped trend
+summary(fit3.holt)
+checkresiduals(fit3.holt)
+
+plot(mortality, type="l", ylab="Mortality Rate", xlab="Year", fcol="white", plot.conf=FALSE, , xlim=c(2019.62,2019.85))
+lines(fit1.ses$mean, col="blue", type="l")
+lines(fit2.holt$mean, col="red", type="l")
+lines(fit3.holt$mean, col="green", type="l")
+legend("topleft", lty=1, col=c("black","blue","red","green"),
+       c("Data","SES", "Holt's linear trend", "Additive damped trend"))
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(kableExtra)
+
+models <- c("Simple SES", "Simple Holt", "Additive Damped Trend Holt SES" )
+AIC <- c("NA", "NA", "4976.632")
+BIC <- c("NA", "NA", "5002.015")
+MASE <- c("0.6869107", "0.7261802", "0.687107")
+p <- c("2.351e-07", "0.005774", "3.536e-07")
+res <- c("Normal", "Normal", "Normal")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p, res))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**", "**Residual Normality**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Checking the summaries and residuals for each model reveals that all the models have normal residuals. The Simple SES and Additive Damped Trend Holt SES models have similar MASE values that are lower compared to the Simple Holt model. The Simple SES model can be chosen as the best one due to its slightly lower MASE. All models have low p-values from the Ljung-Box test, rejecting the null hypothesis and showing evidence of serial correlation in the model. 
+
+\newpage
+
+## State Space Models
+
+```{r warning=FALSE}
+
+etsAN = ets(mortality, model="ANN")
+summary(etsAN)
+checkresiduals(etsAN)
+
+etsMN = ets(mortality, model="MNN")
+summary(etsMN)
+checkresiduals(etsMN) 
+
+etsAA = ets(mortality, model="AAN")
+summary(etsAA)
+checkresiduals(etsAA)
+
+etsMM = ets(mortality, model="MMN")
+summary(etsMM)
+checkresiduals(etsMM)
+
+etsMA = ets(mortality, model="MAN")
+summary(etsMA)
+checkresiduals(etsMA)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("ANN State Space", "MNN State Space", "AAN State Space", "MMN State Space", "MAN State Space")
+AIC <- c("4971.256", "4954.111", "4975.460", "4957.923", "4957.818")
+BIC <- c("4983.947", "4966.803", "4996.612", "4983.306", "4983.201")
+MASE <- c("0.6871475", "0.6879431", "0.6874132", "0.6887639", "0.6894931")
+p <- c("1.967e-07", "3.201e-09", "1.655e-07", "0.0001077", "0.0002007")
+res <- c("Normal", "Non-normal", "Normal", "Normal", "Normal")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p, res))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**", "**Residual Normality**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+The test statistics from the models show very similar values for all the reported metrics, indicating similar performance across all models. The MNN state space model seems to have slightly right skewed residuals and Keun be rejected. All models have a low p-value for the Ljung-Box test, indicating serial correlation in the data for all models due to the null hypothesis being rejected. Despite all models having similar MASE values, it is possible to conclude that the ANN state space model is the best based on its MASE.
+
+```{r warning=FALSE}
+
+A = ts(matrix(NA,4,5000),start=c(2019,41),frequency = 52)
+
+M = 5000
+for (i in 1:M){
+  A[,i] = simulate(etsAN , initstate = etsAN$states[509,] , nsim=4)
+}
+
+plot(mortality , ylim=range(mortality,A) , xlim=c(2010,2020),
+     ylab="Mortality rates" , xlab="Year", main="5000 simulated future sample paths (Full)")
+for(i in 1:M){
+  lines(A[,i],col="gray")
+}
+
+plot(mortality , ylim=range(mortality,A) , xlim=c(2019.6,2019.9),
+     ylab="Mortality rates" , xlab="Year", main="5000 simulated future sample paths (Zoomed)")
+for(i in 1:M){
+  lines(A[,i],col="gray")
+}
+
+# interval estimates and bounds
+
+N = 4
+xlim=c(2010,2020)
+
+Pi = array(NA, dim=c(N,2))
+avrg = array(NA, N)
+
+# Calculate the interval estimates and mid point
+for (i in 1:N){
+  Pi[i,] = quantile(A[i,], type=8, prob=c(.05,.95))
+  avrg[i] = mean(A[i,]) # This would be median as well
+}
+
+# Create ts objects for plotting
+Pi.lb = ts(Pi[,1],start=end(mortality),f=52)
+Pi.ub = ts(Pi[,2],start=end(mortality),f=52)
+avrg.pred = ts(avrg,start=end(mortality),f=52)
+
+plot(mortality,xlim=xlim , ylim=range(mortality,A),ylab="Y",xlab="Year", main="
+4 weeks ahead predictions (Full)")
+lines(Pi.lb,col="blue", type="l")
+lines(Pi.ub,col="red", type="l")
+lines(avrg.pred,col="green", type="l")
+legend("topleft", lty=1, pch=1, col=c("black","blue","red","green"), text.width =2, cex=0.4,
+       c("Data","5% lower limit","95% upper limit","Mean prediction"))
+
+plot(mortality,xlim=c(2019.5,2020) , ylim=range(mortality,A),ylab="Y",xlab="Year", main="
+4 weeks ahead predictions (zoomed)")
+lines(Pi.lb,col="blue", type="l")
+lines(Pi.ub,col="red", type="l")
+lines(avrg.pred,col="green", type="l")
+legend("topleft", lty=1, pch=1, col=c("black","blue","red","green"), text.width =2, cex=0.8,
+       c("Data","5% lower limit","95% upper limit","Mean prediction"))
+```
+
+5000 simulated future sample parts are plotted along with the four weeks ahead predictions for the ANN state space model. Zoomed views of each plot are also plotted to be able to analyze the forecast better. The forecast predicts that mortality will remain roughly constant at around 84.6.
+
+\newpage
+
+## Task 2
+
+The objective of this task is to create 4 weeks ahead forecasts for the first flowering day (FFD) based on multiple univariate models, including time series regression, exponential smoothing, and state space models. The plots of the FFD series and its predictors are given below:
+
+```{r warning=FALSE}
+ffddata <- read.csv("FFD .csv")
+head(ffddata)
+
+ffd <- ts(ffddata$FFD, start=c(1984,1), frequency=1)
+temp <- ts(ffddata$Temperature, start=c(1984,1), frequency=1)
+rain <- ts(ffddata$Rainfall, start=c(1984,1), frequency=1)
+radiation <- ts(ffddata$Radiation, start=c(1984,1), frequency=1)
+relhumid <- ts(ffddata$RelHumidity, start=c(1984,1), frequency=1)
+
+plot(ffd, ylab='Annual averages of FFD',xlab='Year',
+     main = "Time series plot of annual averages of FFD")
+
+plot(temp, ylab='Annual averages of temperature',xlab='Year',
+     main = "Time series plot of annual averages of temperature")
+
+plot(rain, ylab='Annual averages of rainfall',xlab='Year',
+     main = "Time series plot of annual averages of rainfall")
+
+plot(radiation, ylab='Annual averages of radiation',xlab='Year',
+     main = "Time series plot of annual averages of radiation")
+
+plot(relhumid, ylab='Annual averages of relative humidity',xlab='Year',
+     main = "Time series plot of annual averages of relative humidity")
+
+```
+
+\newpage
+
+## Exploring Stationarity of Variables
+
+Plotting the ACF and PACF for FFD and its predictors demonstrates similar results for all variables. All the ACF and PACF plots have peaks that are not particularly significant, with no obvious seasonal components, Indicating that the series is stationary.
+
+```{r warning=FALSE}
+
+par(mfrow=c(1,2))
+acf(ffd, max.lag = 24, main = "FFD ACF")
+pacf(ffd, max.lag = 24, main = "FFD PACF")
+
+par(mfrow=c(1,2))
+acf(temp, max.lag = 24, main="Temperature ACF")
+pacf(temp, max.lag = 24, main = "Temperature PACF")
+
+par(mfrow=c(1,2))
+acf(rain, max.lag = 24, main = "Rain ACF")
+pacf(rain, max.lag = 24, main = "Rain PACF")
+
+par(mfrow=c(1,2))
+acf(radiation, max.lag = 24, main = "Radiation ACF")
+pacf(radiation, max.lag = 24, main = "Radiation PACF")
+
+par(mfrow=c(1,2))
+acf(relhumid, max.lag = 24, main = "Relative Humidity ACF")
+pacf(relhumid, max.lag = 24, main = "Relative Humidity PACF")
+
+```
+
+For further confirmation of non-stationarity in the series, an Augmented Dicky-Fuller test and Phillips Perron unit root test is performed on the series. The augmented Dickey fuller test produces less extreme test statistics compared to the critical values at all significance levels for the FFD and all the predictor series. This implies that the null hypothesis can be rejected and the series are stationary. This is contrasted by the Phillips perron unit root test, which produces a more extreme test statistic compared to its critical values. Therefore, the null hypothesis cannot be rejected implying that the series are non-stationary. These conflicting results make it difficult to conclude whether the series are truly stationary or not.
+
+
+```{r warning=FALSE}
+adf.ffd = ur.df(ffd, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.ffd)
+pp.ffd = ur.pp(ffd, type = "Z-tau", lags = "short")
+summary(pp.ffd)
+
+adf.temp = ur.df(temp, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.temp)
+app.temp = ur.pp(temp, type = "Z-tau", lags = "short")
+summary(pp.temp)
+
+adf.rain = ur.df(rain, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.rain)
+pp.rain = ur.pp(rain, type = "Z-tau", lags = "short")
+summary(pp.rain)
+
+adf.radiation = ur.df(radiation, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.radiation)
+pp.radiation = ur.pp(radiation, type = "Z-tau", lags = "short")
+summary(pp.radiation)
+
+adf.relhumid = ur.df(relhumid, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.relhumid)
+pp.relhumid = ur.pp(relhumid, type = "Z-tau", lags = "short")
+summary(pp.relhumid)
+
+```
+\newpage
+
+## Applying Transformations to FFD 
+
+A log transformation, a Box Cox transformation, and differencing are performed to the FFD series to see if any improvements occur to the Phillips Perron test. However, similar results are obtained with a more extreme test statistic being produced compared to each test's respective critical values, implying that according to the Phillips Perron test, the series is non-stationary.
+
+```{r warning=FALSE}
+
+# Trying a log transformation to make the series stationary
+log.ffd = log(ffd)
+plot(log.ffd,ylab='Log of annual averages of FFD',xlab='Year',type='o',
+     main = "Time series plot of log of annual averages of FFD")
+pp.log = ur.pp(log.ffd, type = "Z-tau", lags = "short")
+summary(pp.log)
+
+# Trying a Box Cox transformation to make the series stationary
+bc.ffd = BoxCox.ar(ffd)
+bc.ffd$ci
+bc.ffd = BoxCox(ffd, lambda = 0.35)
+plot(bc.ffd, ylab='Log of annual averages of FFD',xlab='Year',type='o',
+     main = "Time series plot of Box Cox transformed FFD")
+pp.bc = ur.pp(bc.ffd, type = "Z-tau", lags = "short")
+summary(pp.bc)
+
+# Trying a first-order differencing transformation to make the series stationary
+diff1.ffd = diff(ffd, differences = 1, lag = 1)
+plot(diff1.ffd, ylab='First-order difference for annual averages of FFD', xlab='Year', type='o',
+     main = "Time series plot of the first-order difference of annual averages of FFD")
+pp.diff1 = ur.pp(diff1.ffd, type = "Z-tau", lags = "short")
+summary(pp.diff1)
+
+# Trying a second-order differencing transformation to make the series stationary
+diff2.ffd = diff(ffd, differences = 2, lag = 1)
+plot(diff2.ffd, ylab='Second-order difference for annual averages of FFD', xlab='Year', type='o',
+     main = "Time series plot of the second-order difference of annual averages of FFD")
+pp.diff2 = ur.pp(diff2.ffd, type = "Z-tau", lags = "short")
+summary(pp.diff2)
+
+```
+
+
+\newpage
+
+## Correlating Predictor Variables with Dependent Variable
+
+Inspecting the scaled plots of FFD versus its predictors is challenging due to the lack of data. However, all the predictors seem to follow the overall trend of FFD except for a significant peak in relative humidity around the year 2000 which contrasts the significant dip in the FFD series.
+
+```{r warning=FALSE}
+ffddata.ts <- ts(ffddata[,c(6,2)], start=c(1984,1), frequency=1)
+ffddata_scaled = scale(ffddata.ts)
+plot(ffddata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("FFD", "Temperature"))
+
+ffddata.ts <- ts(ffddata[,c(6,3)], start=c(1984,1), frequency=1)
+ffddata_scaled = scale(ffddata.ts)
+plot(ffddata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("FFD", "Rainfall"))
+
+ffddata.ts <- ts(ffddata[,c(6,4)], start=c(1984,1), frequency=1)
+ffddata_scaled = scale(ffddata.ts)
+plot(ffddata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("FFD", "Radiation"))
+
+ffddata.ts <- ts(ffddata[,c(6,5)], start=c(1984,1), frequency=1)
+ffddata_scaled = scale(ffddata.ts)
+plot(ffddata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("FFD", "Relative Humidity"))
+
+```
+
+Since a visual confirmation of the correlation between predictor and dependent variables is insufficient, the variables can be correlated using the cor() function in order to obtain a numerical representation of correlation. Obtaining the correlation values shows that the most correlated predictor for the FFD series is temperature, with a negative correlation of -0.25. Overall however, none of the predictors seem to be highly correlated with FFD. 
+
+```{r warning=FALSE}
+
+#correlate variables
+ffddata.ts <- ts(ffddata[,2:6], start=c(1984,1), frequency=1)
+cor(ffddata.ts)
+
+```
+
+\newpage
+
+## Fitting Distributed Lag Models 
+
+### Polynomial DLM
+
+Polynomial DLM models are first fitted using the polyDlm() function, using each predictor variable to predict FFD. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10, and a polynomial order of 2.
+
+```{r warning=FALSE}
+  
+#PolyDLM 
+finiteDLMauto(x = as.vector(temp), y = as.vector(ffd), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly1 = polyDlm(x = as.vector(temp), y = as.vector(ffd), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly1)
+checkresiduals(model.poly1$model)
+MASE(model.poly1)
+
+finiteDLMauto(x = as.vector(rain), y = as.vector(ffd), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly2 = polyDlm(x = as.vector(rain), y = as.vector(ffd), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly2)
+checkresiduals(model.poly2$model)
+MASE(model.poly2)
+
+finiteDLMauto(x = as.vector(radiation), y = as.vector(ffd), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly3 = polyDlm(x = as.vector(radiation), y = as.vector(ffd), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly3)
+checkresiduals(model.poly3$model)
+MASE(model.poly3)
+
+finiteDLMauto(x = as.vector(relhumid), y = as.vector(ffd), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly4 = polyDlm(x = as.vector(relhumid), y = as.vector(ffd), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly4)
+checkresiduals(model.poly4$model)
+MASE(model.poly4)
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.646", "0.625", "0.646", "0.652")
+p <- c("0.3896", "0.3729", "0.773", "0.3036")
+rsq <- c("0.009816", "0.01605", "-0.1037", "0.04447")
+bg <- c("0.507", "0.03878", "0.5379", "0.5536")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**Polynomial Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+All the models are not significant, with p-values larger than 0.05 and very low R-squared values, implying that none of the models explained the data particularly well. All the models except for the rain model failed to reject the null hypothesis for the Breusch-Godfrey test due to high p-values over 0.05. This implies that the models do not have serial correlation. The MASE values decent since all the models produce relatively low values compared to earlier models. Despite poor performance by all the polynomial models, relative humidity is selected to be the best predictor from the polynomial models based on the results obtained.
+
+### Koyck (Geometric) DLM
+
+```{r warning=FALSE}
+# Kocyk 
+model.Koyck1 = koyckDlm(x = as.vector(temp), y = as.vector(ffd), intercept = TRUE)
+summary(model.Koyck1)
+checkresiduals(model.Koyck1$model)
+MASE(model.Koyck1)
+
+model.Koyck2 = koyckDlm(x = as.vector(rain), y = as.vector(ffd), intercept = TRUE)
+summary(model.Koyck2)
+checkresiduals(model.Koyck2$model)
+MASE(model.Koyck2)
+
+model.Koyck3 = koyckDlm(x = as.vector(radiation), y = as.vector(ffd), intercept = TRUE)
+summary(model.Koyck3)
+checkresiduals(model.Koyck3$model)
+MASE(model.Koyck3)
+
+model.Koyck4 = koyckDlm(x = as.vector(relhumid), y = as.vector(ffd), intercept = TRUE)
+summary(model.Koyck4)
+checkresiduals(model.Koyck4$model)
+MASE(model.Koyck4)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.793", "0.727", "0.714", "0.734")
+p <- c("0.9301", "0.9254", "0.8626", "0.9226")
+rsq <- c("-0.4255", "-0.3431", "-0.1037", "-0.2906")
+lb <- c("0.2362", "0.05953", "0.1663", "0.5133")
+
+s<- data.frame(cbind(models, MASE, p, rsq, lb))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Ljung-Box p-value**")
+
+s %>% kbl(caption = "**Koyck Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+The Koyck models are also not significant due to high p-values obtained for each model. The R-squared values obtained for the models are not desirable due to all of them being negative. MASE values are slightly higher than those obtained for the polynomial models. The best model from the Koyck models is chosen to be radiation based on the results obtained, however none of the models are particularly suitable to predict FFD.
+
+
+\newpage
+
+### Finite DLM
+
+```{r warning=FALSE}
+# Finite DLM
+finiteDLMauto(x = as.vector(temp), y = as.vector(ffd), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm1 = dlm(x = as.vector(temp), y = as.vector(ffd), q = 8)
+summary(model.dlm1)
+checkresiduals(model.dlm1$model)
+MASE(model.dlm1)
+
+finiteDLMauto(x = as.vector(rain), y = as.vector(ffd), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm2 = dlm(x = as.vector(rain), y = as.vector(ffd), q = 8)
+summary(model.dlm2)
+checkresiduals(model.dlm2$model)
+MASE(model.dlm2)
+
+finiteDLMauto(x = as.vector(radiation), y = as.vector(ffd), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm3 = dlm(x = as.vector(radiation), y = as.vector(ffd), q = 8)
+summary(model.dlm3)
+checkresiduals(model.dlm3$model)
+MASE(model.dlm3)
+
+finiteDLMauto(x = as.vector(relhumid), y = as.vector(ffd), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm4 = dlm(x = as.vector(relhumid), y = as.vector(ffd), q = 8)
+summary(model.dlm4)
+checkresiduals(model.dlm4$model)
+MASE(model.dlm4)
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.538", "0.555", "0.484", "0.591")
+p <- c("0.578", "0.6149", "0.3042", "0.8164")
+rsq <- c("-0.05959", "-0.08337", "0.04168", "-0.2278")
+bg <- c("0.04168", "0.04168", "0.1234", "0.04168")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**Finite DLM Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+A finite DLM is fitted using the dlm() function. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 8 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 8.
+
+The results for the DLM models are similar to the polynomial and Koyck implementations as all the models have high p-values, indicating that the models are not significant. Low R-squared values indicate that the models do not describe the data particularly well, but the p-value obtained from the Breusch-Godfrey test implies that the models do not have serial correlation and they have the lowest MASE obtained thus far. Based on these results, radiation is chosen as the best predictor when implementing DLM models for FFD.
+
+\newpage
+
+### ARDL Model
+
+```{r warning=FALSE}
+#ARDL
+
+#temp
+columns = c("p","q","AIC","BIC") 
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(temp), y = as.vector(ffd), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL1 <- ardlDlm(x = as.vector(temp), y = as.vector(ffd), p = 5, q = 1)
+summary(model.ARDL1)
+checkresiduals(model.ARDL1$model)
+MASE(model.ARDL1)
+
+df = df[0,]
+
+#rain
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(rain), y = as.vector(ffd), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL2 <- ardlDlm(x = as.vector(rain), y = as.vector(ffd), p = 5, q = 3)
+summary(model.ARDL2)
+checkresiduals(model.ARDL2$model)
+MASE(model.ARDL2)
+
+df = df[0,]
+
+#radiation
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(radiation), y = as.vector(ffd), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL3 <- ardlDlm(x = as.vector(radiation), y = as.vector(ffd), p = 5, q = 1)
+summary(model.ARDL3)
+checkresiduals(model.ARDL3$model)
+MASE(model.ARDL3)
+
+df = df[0,]
+
+#relative humidity
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(relhumid), y = as.vector(ffd), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL4 <- ardlDlm(x = as.vector(relhumid), y = as.vector(ffd), p = 5, q = 1)
+summary(model.ARDL4)
+checkresiduals(model.ARDL4$model)
+MASE(model.ARDL4)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.591", "0.5484", "0.587", "0.603")
+p <- c("0.4912", "0.3355", "0.7106", "0.5802")
+rsq <- c("-0.01279", "0.08137", "-0.1089", "-0.05177")
+bg <- c("0.2612", "0.04712", "0.1157", "0.0454")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**ARDL Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Four different ARDL models are produced based on each predictor, one at a time. A process of iteration similar to the previous task is used to determine the ideal p and q values for each model and the best model is chosen based on the lowest AIC values. The summary and residuals of each of the models demonstrate that none of the models are significant due to high p-values and low R-squared values. All the models have no signs of serial correlation based on the high p-value obtained from the Breusch-Godfrey test. All the ARDL models have relatively low MASE compared to previous models. The ARDL model using rain as a predictor is chosen to be the best one based on its MASE, p-value, and R-squared value relative to other models.
+
+## Forecasting with Time Series Regression Models 
+
+Four years ahead forecasts are created for the polynomial and Koyck models. The resulting plot shows that Koyck and polynomial models produces somewhat similar forecasts, except the predictions of the Koyck model remain slightly lower than that pf the polynomial model until 2018, where their predictions align.
+
+```{r warning=FALSE}
+predictor <- read.csv("Covariate x-values for Task 2 .csv")
+model.poly.Frc = dLagM::forecast(model.poly4, x = t(predictor$RelHumidity), h=4)
+model.koyck.Frc = dLagM::forecast(model.Koyck3, x = t(predictor$Radiation), h=4)
+
+plot(ts(c(as.vector(ffd), model.poly.Frc$forecasts), start = 1984, frequency = 1), type="o", col="red", ylim=c(120, 260),
+     ylab="FFD", xlab="Year", main="FFD with 4 years ahead of forecasts")
+lines(ts(c(as.vector(ffd), model.koyck.Frc$forecasts), start = 1984, frequency = 1), col="green",type="o")
+lines(ts(as.vector(ffd), start = 1984, frequency = 1),col="black",type="o")
+legend("topleft",lty=1, pch = 1, text.width = 11, col=c( "red", "green", "black"), 
+       c("Polynomial", "Koyck", "FFD"))
+
+
+```
+
+\newpage
+
+## Exponential Smoothing Models
+
+A simple exponential smoothing model, a Holt’s linear trend model, and a Holt’s linear trend model with additive damped trend are implemented using the FFD series. Models that take into account seasonal components are not considered due to the annual frequency of the time series data. The three above models are created for the FFD series using the ses() and holt() functions.
+
+The results of the point forecasts show that the SES and the additive damped trend models produce a constant forecast at around the 200 mark. In contrast, the Holt's linear trend forecast starts at a lower FFD 183 and shows a constant decrease for the duration of the forecast.
+
+```{r warning=FALSE}
+fit1.ses <- ses(ffd, initial="simple", h=4)
+summary(fit1.ses)
+checkresiduals(fit1.ses)
+
+fit2.holt <- holt(ffd, initial="simple", h=4) 
+summary(fit2.holt)
+checkresiduals(fit2.holt)
+
+fit3.holt <- holt(ffd, damped=TRUE, initial="simple", h=4) # Fit with additive damped trend
+summary(fit3.holt)
+checkresiduals(fit3.holt)
+
+plot(ffd, type="l", ylab="FFD", xlab="Year", fcol="white", plot.conf=FALSE, xlim=c(1984,2018))
+lines(fit1.ses$mean, col="blue", type="l")
+lines(fit2.holt$mean, col="red", type="l")
+lines(fit3.holt$mean, col="green", type="l")
+legend("topleft", lty=1, col=c("black","blue","red","green"),
+       c("Data","SES", "Holt's linear trend", "Additive damped trend"))
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(kableExtra)
+
+models <- c("Simple SES", "Simple Holt", "Additive Damped Trend Holt SES" )
+AIC <- c("NA", "NA", "311.7836")
+BIC <- c("NA", "NA", "320.3875")
+MASE <- c("0.6711909", "0.9317453", "0.6322173")
+p <- c("0.1896", "0.2975", "0.1969")
+res <- c("Normal", "Non-normal", "Non-normal")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p, res))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**", "**Residual Normality**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Checking the summaries and residuals for each model reveals that the Simple SES and Additive Damped Trend Holt SES have lower MASE values than the Simple Holt model. It is difficult to determine normality of residuals from the output provided as there are not many data points in the dataset; however, it is possible to assume that Simple SES has normal residuals based on the residuals plots. Considering all the metrics from the summary and residuals, the Additive Damped Trend Holt SES may be chosen as the best Simple exponential smoothing model.
+
+\newpage
+
+## State Space Models
+
+ANN, MNN, AAN, MMN, and MAN state space models are created for FFD and their residuals and summaries are analysed below.
+
+```{r warning=FALSE}
+
+etsAN = ets(ffd, model="ANN")
+summary(etsAN)
+checkresiduals(etsAN)
+
+etsMN = ets(ffd, model="MNN")
+summary(etsMN)
+checkresiduals(etsMN) 
+
+etsAA = ets(ffd, model="AAN")
+summary(etsAA)
+checkresiduals(etsAA)
+
+etsMM = ets(ffd, model="MMN")
+summary(etsMM)
+checkresiduals(etsMM)
+
+etsMA = ets(ffd, model="MAN")
+summary(etsMA)
+checkresiduals(etsMA)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("ANN State Space", "MNN State Space", "AAN State Space", "MMN State Space", "MAN State Space")
+AIC <- c("306.9455", "306.9448", "309.2274", "309.3333", "309.4179")
+BIC <- c("311.2474", "311.2468", "316.3973", "316.5032", "316.5879")
+MASE <- c("0.661411", "0.6614151", "0.6199298", "0.6185461", "0.6229869")
+p <- c("0.278", "0.278", "0.1712", "0.1748", "0.1804")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+The lowest MASE is seen in the MMN model, while the lowest AIC and BIC are observed in the MNN model. All the models do not seem to contain serial correlation due to high p-values from the Ljung-Box test.
+Based on these, the final model chosen was the MNN state space model due to its overall combination of low AIC and BIC, while having a similar MASE value compared to the other models.
+
+```{r warning=FALSE}
+
+A = ts(matrix(NA,4,5000),start=2015,frequency = 1)
+
+M = 5000
+for (i in 1:M){
+  A[,i] = simulate(etsAN , initstate = etsAN$states[31,] , nsim = 4)
+}
+
+plot(ffd , ylim=range(ffd,A) , xlim=c(1984,2018),
+     ylab="FFD" , xlab="Year", main="5000 simulated future sample paths")
+for(i in 1:M){
+  lines(A[,i],col="gray")
+}
+
+# interval estimates and bounds
+
+N = 4
+xlim=c(1984,2018)
+
+Pi = array(NA, dim=c(N,2))
+avrg = array(NA, N)
+
+# Calculate the interval estimates and mid point
+for (i in 1:N){
+  Pi[i,] = quantile(A[i,], type=8, prob=c(.05,.95))
+  avrg[i] = mean(A[i,]) # This would be median as well
+}
+
+# Create ts objects for plotting
+Pi.lb = ts(Pi[,1],start=end(ffd),f=1)
+Pi.ub = ts(Pi[,2],start=end(ffd),f=1)
+avrg.pred = ts(avrg,start=end(ffd),f=1)
+
+plot(ffd,xlim=xlim , ylim=range(ffd,A),ylab="Y",xlab="Year", main="
+4 weeks ahead predictions (Full)")
+lines(Pi.lb,col="blue", type="l")
+lines(Pi.ub,col="red", type="l")
+lines(avrg.pred,col="green", type="l")
+legend("topleft", lty=1, pch=1, col=c("black","blue","red","green"), text.width =2, cex=0.4,
+       c("Data","5% lower limit","95% upper limit","Mean prediction"))
+
+
+###################################################################################################################################
+```
+
+5000 simulated future paths are plotted to obtain an idea of the potential range of forecasts that could be obtained. The simulated paths demonstrate a periodic rise and fall. Plotting the forecast along with the confidence intervals shows a roughly constant forecast (green) at around 210. The confidence intervals seem quite wide, ranging from roughly 170 till 250 and both bounds seem equidistant from the forecast.
+
+\newpage
+
+## Task 3 Part A
+
+Time series regression models, state space models, and exponential smoothing models are explored to create 3 years ahead forecasts for the Rank-based Order similarity metric  (RBO) and various climate conditions which act as predictor variables. Each series is plotted to observe overall trends. 
+
+```{r warning=FALSE}
+rbodata <- read.csv("RBO .csv")
+head(rbodata)
+
+rbo <- ts(rbodata$RBO, start=c(1984,1), frequency=1)
+temp <- ts(rbodata$Temperature, start=c(1984,1), frequency=1)
+rain <- ts(rbodata$Rainfall, start=c(1984,1), frequency=1)
+radiation <- ts(rbodata$Radiation, start=c(1984,1), frequency=1)
+relhumid <- ts(rbodata$RelHumidity, start=c(1984,1), frequency=1)
+
+plot(rbo, ylab='Annual averages of RBO',xlab='Year',
+     main = "Time series plot of annual averages of RBO")
+
+plot(temp, ylab='Annual averages of temperature',xlab='Year',
+     main = "Time series plot of annual averages of temperature")
+
+plot(rain, ylab='Annual averages of rainfall',xlab='Year',
+     main = "Time series plot of annual averages of rainfall")
+
+plot(radiation, ylab='Annual averages of radiation',xlab='Year',
+     main = "Time series plot of annual averages of radiation")
+
+plot(relhumid, ylab='Annual averages of relative humidity',xlab='Year',
+     main = "Time series plot of annual averages of relative humidity")
+
+```
+
+\newpage
+
+## Exploring Stationarity of Variables
+
+Plotting the ACF and PACF for the series demonstrates similar results for both variables. All the series have most peaks lying below the 95% confidence interval, with RBO and temperature displaying a more periodic rise and fall compared to the other variables. This suggests that the series are likely stationary. 
+
+```{r warning=FALSE}
+
+par(mfrow=c(1,2))
+acf(rbo, max.lag = 24, main = "RBO ACF")
+pacf(rbo, max.lag = 24, main = "RBO PACF")
+
+par(mfrow=c(1,2))
+acf(temp, max.lag = 24, main="Temperature ACF")
+pacf(temp, max.lag = 24, main = "Temperature PACF")
+
+par(mfrow=c(1,2))
+acf(rain, max.lag = 24, main = "Rain ACF")
+pacf(rain, max.lag = 24, main = "Rain PACF")
+
+par(mfrow=c(1,2))
+acf(radiation, max.lag = 24, main = "Radiation ACF")
+pacf(radiation, max.lag = 24, main = "Radiation PACF")
+
+par(mfrow=c(1,2))
+acf(relhumid, max.lag = 24, main = "Relative Humidity ACF")
+pacf(relhumid, max.lag = 24, main = "Relative Humidity PACF")
+
+```
+
+For further confirmation of non-stationarity in the series, an Augmented Dicky-Fuller test is performed on the series. The absolute value of the test statistic is lower than the absolute of the critical values at 1%, 5% and 10% significance levels for all the series, suggesting that the series is stationary.
+
+Further confirmation can be obtained using a Phillips-Perron unit root test in addition to the ADF test. The Phillips-Perron test produces a Z-tau test statistic that is larger than the critical values at 1%, 5% and 10% significance levels for the Temperature, Rain, and Relative Humidity series, while the radiation series produces a Z-tau test statistic that is only more extreme at the 1% significance level. Since the RBO series is confirmed by both tests to be stationary, no transformations need to be carried out on the series.
+
+```{r warning=FALSE}
+adf.rbo = ur.df(rbo, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.rbo)
+pp.rbo = ur.pp(rbo, type = "Z-tau", lags = "short")
+summary(pp.rbo)
+
+adf.temp = ur.df(temp, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.temp)
+pp.temp = ur.pp(temp, type = "Z-tau", lags = "short")
+summary(pp.temp)
+
+adf.rain = ur.df(rain, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.rain)
+pp.rain = ur.pp(rain, type = "Z-tau", lags = "short")
+summary(pp.rain)
+
+adf.radiation = ur.df(radiation, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.radiation)
+pp.radiation = ur.pp(radiation, type = "Z-tau", lags = "short")
+summary(pp.radiation)
+
+adf.relhumid = ur.df(relhumid, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.relhumid)
+pp.relhumid = ur.pp(relhumid, type = "Z-tau", lags = "short")
+summary(pp.relhumid)
+
+```
+
+\newpage
+
+## Correlating Predictor Variables with Dependent Variable
+
+The scaled predictor series are plotted against RBO to visually identify any potential relationships between the climate conditions and RBO. Temperature and rainfall seem to follow the RBO series more closely than radiation and relative humidity.
+
+```{r warning=FALSE}
+rbodata.ts <- ts(rbodata[,c(2,3)], start=c(1984,1), frequency=1)
+rbodata_scaled = scale(rbodata.ts)
+plot(rbodata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("RBO", "Temperature"))
+
+rbodata.ts <- ts(rbodata[,c(2,4)], start=c(1984,1), frequency=1)
+rbodata_scaled = scale(rbodata.ts)
+plot(rbodata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("RBO", "Rainfall"))
+
+rbodata.ts <- ts(rbodata[,c(2,5)], start=c(1984,1), frequency=1)
+rbodata_scaled = scale(rbodata.ts)
+plot(rbodata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("RBO", "Radiation"))
+
+rbodata.ts <- ts(rbodata[,c(2,6)], start=c(1984,1), frequency=1)
+rbodata_scaled = scale(rbodata.ts)
+plot(rbodata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("RBO", "Relative Humidity"))
+
+```
+
+Since a visual confirmation of the correlation between predictor and dependent variables is insufficient, the variables can be correlated using the cor() function in order to obtain a numerical representation of correlation. Obtaining the correlation values shows that rainfall is the most positively correlated with RBO with a correlation of 0.39 and radiation is the most negatively correlated with a value of -0.32. However, none of the variables show particularly high correlations with RBO.
+
+```{r warning=FALSE}
+
+#correlate variables
+rbodata.ts <- ts(rbodata[,2:6], start=c(1984,1), frequency=1)
+cor(rbodata.ts)
+
+```
+
+\newpage
+
+## Fitting Distributed Lag Models 
+
+### Polynomial DLM
+
+Polynomial DLM models are first fitted using the polyDlm() function, using each of the predictor variables to predict RBO. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 3, and a polynomial order of 2.
+
+```{r warning=FALSE}
+  
+#PolyDLM 
+finiteDLMauto(x = as.vector(temp), y = as.vector(rbo), q.min = 2, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly1 = polyDlm(x = as.vector(temp), y = as.vector(rbo), q = 3, k = 2, show.beta = TRUE)
+summary(model.poly1)
+checkresiduals(model.poly1$model)
+MASE(model.poly1)
+
+finiteDLMauto(x = as.vector(rain), y = as.vector(rbo), q.min = 2, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly2 = polyDlm(x = as.vector(rain), y = as.vector(rbo), q = 3, k = 2, show.beta = TRUE)
+summary(model.poly2)
+checkresiduals(model.poly2$model)
+MASE(model.poly2)
+
+finiteDLMauto(x = as.vector(radiation), y = as.vector(rbo), q.min = 2, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly3 = polyDlm(x = as.vector(radiation), y = as.vector(rbo), q = 3, k = 2, show.beta = TRUE)
+summary(model.poly3)
+checkresiduals(model.poly3$model)
+MASE(model.poly3)
+
+finiteDLMauto(x = as.vector(relhumid), y = as.vector(rbo), q.min = 2, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly4 = polyDlm(x = as.vector(relhumid), y = as.vector(rbo), q = 3, k = 2, show.beta = TRUE)
+summary(model.poly4)
+checkresiduals(model.poly4$model)
+MASE(model.poly4)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("1.0725", "0.949", "1.14", "1.205")
+p <- c("0.04843", "0.03391", "0.269", "0.6657")
+rsq <- c("0.1848", "0.2108", "0.04187", "-0.05504")
+bg <- c("0.1481", "0.03878", "0.05862", "0.04394")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**Polynomial Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Only the temperature and rainfall predictors produce polynomial DLM models that are significant, with p-values below 0.05. Of these, rainfall has the lowest MASE and the highest R-squared value. However, none of the models have high R-squared values, implying that none of the models describe the data very well. The Breusch-Godfrey tests reveal that rainfall and relative humidity produce models with serial correlation due to p-values lower than 0.05.
+
+### Koyck (Geometric) DLM
+
+```{r warning=FALSE}
+# Kocyk 
+model.Koyck1 = koyckDlm(x = as.vector(temp), y = as.vector(rbo), intercept = TRUE)
+summary(model.Koyck1)
+checkresiduals(model.Koyck1$model)
+MASE(model.Koyck1)
+
+model.Koyck2 = koyckDlm(x = as.vector(rain), y = as.vector(rbo), intercept = TRUE)
+summary(model.Koyck2)
+checkresiduals(model.Koyck2$model)
+MASE(model.Koyck2)
+
+model.Koyck3 = koyckDlm(x = as.vector(radiation), y = as.vector(rbo), intercept = TRUE)
+summary(model.Koyck3)
+checkresiduals(model.Koyck3$model)
+MASE(model.Koyck3)
+
+model.Koyck4 = koyckDlm(x = as.vector(relhumid), y = as.vector(rbo), intercept = TRUE)
+summary(model.Koyck4)
+checkresiduals(model.Koyck4$model)
+MASE(model.Koyck4)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("1.915", "19.106", "1.031", "0.956")
+p <- c("0.1397", "0.9846", "0.01732", "0.009161")
+rsq <- c("-1.789", "-307.8", "-0.06498", "0.1682")
+lb <- c("0.6824", "0.05953", "0.6161", "0.3265")
+
+s<- data.frame(cbind(models, MASE, p, rsq, lb))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Ljung-Box p-value**")
+
+s %>% kbl(caption = "**Koyck Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+
+Koyck DLM models are fitted using the koyckDlm() function, and their summaries, residuals, and MASE are reported in the table above. Only radiation and relative humidity produce Koyck models that are significant due to their lower p-values. Of these, relative humidity has the lowest MASE and the highest R-squared value, making it the best model of the four. However, an R-squared value of 0.1682 does not suggest that the model explains the data well. All the Koyck models have no serial correlation due to high p-values obtained from the Ljung-Box tests.
+
+\newpage
+
+### Finite DLM
+
+```{r warning=FALSE}
+# Finite DLM
+finiteDLMauto(x = as.vector(temp), y = as.vector(rbo), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm1 = dlm(x = as.vector(temp), y = as.vector(rbo), q = 1)
+summary(model.dlm1)
+checkresiduals(model.dlm1$model)
+MASE(model.dlm1)
+
+finiteDLMauto(x = as.vector(rain), y = as.vector(rbo), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm2 = dlm(x = as.vector(rain), y = as.vector(rbo), q = 1)
+summary(model.dlm2)
+checkresiduals(model.dlm2$model)
+MASE(model.dlm2)
+
+finiteDLMauto(x = as.vector(radiation), y = as.vector(rbo), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm3 = dlm(x = as.vector(radiation), y = as.vector(rbo), q = 1)
+summary(model.dlm3)
+checkresiduals(model.dlm3$model)
+MASE(model.dlm3)
+
+finiteDLMauto(x = as.vector(relhumid), y = as.vector(rbo), q.min = 1, q.max = 8,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm4 = dlm(x = as.vector(relhumid), y = as.vector(rbo), q = 1)
+summary(model.dlm4)
+checkresiduals(model.dlm4$model)
+MASE(model.dlm4)
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.924", "0.942", "1.063", "1.101")
+p <- c("0.02442", "0.03767", "0.3042", "0.6509")
+rsq <- c("0.1842", "0.1575", "0.06311", "-0.04044")
+bg <- c("0.06806", "0.1391", "0.03573", "0.04215")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**Finite DLM Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Multiple finite DLM  models are fitted using the dlm() function. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 8 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 1.
+
+Temperature and rainfall produce finite DLM models that are significant due to their relatively low p-values and relatively high R-squared values. Of these, the model produced by temperature has the lowest MASE and highest R-squared value, making it the most suitable from the finite DLM models.
+
+\newpage
+
+### ARDL Model
+
+ARDL models are created for each predictor and their summaries, residuals, and MASE are analysed below:
+
+```{r warning=FALSE}
+#ARDL
+
+#temp
+columns = c("p","q","AIC","BIC") 
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(temp), y = as.vector(rbo), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL1 <- ardlDlm(x = as.vector(temp), y = as.vector(rbo), p = 3, q = 2)
+summary(model.ARDL1)
+checkresiduals(model.ARDL1$model)
+MASE(model.ARDL1)
+
+df = df[0,]
+
+#rain
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(rain), y = as.vector(rbo), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL2 <- ardlDlm(x = as.vector(rain), y = as.vector(rbo), p = 1, q = 3)
+summary(model.ARDL2)
+checkresiduals(model.ARDL2$model)
+MASE(model.ARDL2)
+
+df = df[0,]
+
+#radiation
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(radiation), y = as.vector(rbo), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL3 <- ardlDlm(x = as.vector(radiation), y = as.vector(rbo), p = 1, q = 3)
+summary(model.ARDL3)
+checkresiduals(model.ARDL3$model)
+MASE(model.ARDL3)
+
+df = df[0,]
+
+#relative humidity
+for(i in 1:5){
+  for(j in 1:5){
+    model.ARDL = ardlDlm(x = as.vector(relhumid), y = as.vector(rbo), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC, decreasing = TRUE),]
+
+model.ARDL4 <- ardlDlm(x = as.vector(relhumid), y = as.vector(rbo), p = 2, q = 3)
+summary(model.ARDL4)
+checkresiduals(model.ARDL4$model)
+MASE(model.ARDL4)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Temperature", "Rain", "Radiation", "Relative Humidity")
+MASE <- c("0.773", "0.832", "0.820", "0.818")
+p <- c("0.0005378", "0.002523", "0.0006674", "0.00262")
+rsq <- c("0.5505", "0.4408", "0.5101", "0.4684")
+bg <- c("0.5185", "0.2822", "0.1954", "0.2184")
+
+s<- data.frame(cbind(models, MASE, p, rsq, bg))
+colnames(s)<- c("**Model**", "**MASE**", "**Model p-value**", "**Model R-squared value**", "**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**ARDL Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+All the ARDL models are significant and show the best R-squared values thus far. Of these, temperature produced the best ARDL model, having the lowest MASE, lowest p-value, highest R-squared value, and highest p-value for the Breusch-Godfrey test. All models have no serial correlation since all of them have high p-values for the Breusch-Godfrey test.
+
+## Forecasting with Time Series Regression Models 
+
+Three years ahead forecasts are created for the polynomial and Koyck models. The resulting plot shows that Koyck and polynomial models produces somewhat similar forecasts where the Koyck predictions remain slightly lower than the polynomial forecast until 2018, where they align.
+
+```{r warning=FALSE}
+predictor <- read.csv("Covariate x-values for Task 3 .csv")
+model.poly.Frc = dLagM::forecast(model.poly2, x = t(predictor$Rainfall), h=3)
+model.koyck.Frc = dLagM::forecast(model.Koyck4, x = t(predictor$RelHumidity), h=3)
+
+plot(ts(c(as.vector(rbo), model.poly.Frc$forecasts), start = 1983, frequency = 1), type="o", col="red", ylim=c(0.5, 1),
+     ylab="RBO", xlab="Year", main="RBO with 3 years ahead of forecasts")
+lines(ts(c(as.vector(rbo), model.koyck.Frc$forecasts), start = 1983, frequency = 1), col="green",type="o")
+lines(ts(as.vector(rbo), start = 1983, frequency = 1),col="black",type="o")
+legend("topleft",lty=1, pch = 1, text.width = 11, col=c( "red", "green","purple", "black"), 
+       c("Polynomial", "Koyck", "ARDL", "Warming"))
+
+
+```
+
+\newpage
+
+## Exponential Smoothing Models
+
+A simple exponential smoothing model, a Holt’s linear trend model, and a Holt’s linear trend model with additive damped trend are implemented using the RBO series. Models that take into account seasonal components are not considered due to the annual frequency of the time series data. The three above models are created for the FFD series using the ses() and holt() functions.
+
+The results of the point forecasts show that the SES and the additive damped trend models produce a constant forecast at around the 0.72 mark. In contrast, the Holt's linear trend forecast starts slightly lower at around 0.716 and decreases sightly for the duration of the forecast.
+
+The three above models are created for the RBO series using the ses() and holt() functions.
+```{r warning=FALSE}
+fit1.ses <- ses(rbo, initial="simple", h=3)
+summary(fit1.ses)
+checkresiduals(fit1.ses)
+
+fit2.holt <- holt(rbo, initial="simple", h=3) 
+summary(fit2.holt)
+checkresiduals(fit2.holt)
+
+fit3.holt <- holt(rbo, damped=TRUE, initial="simple", h=3) # Fit with additive damped trend
+summary(fit3.holt)
+checkresiduals(fit3.holt)
+
+plot(rbo, type="l", ylab="RBO", xlab="Year", fcol="white", plot.conf=FALSE, xlim=c(1984,2017))
+lines(fit1.ses$mean, col="blue", type="l")
+lines(fit2.holt$mean, col="red", type="l")
+lines(fit3.holt$mean, col="green", type="l")
+legend("topleft", lty=1, col=c("black","blue","red","green"),
+       c("Data","SES", "Holt's linear trend", "Additive damped trend"))
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+models <- c("Simple SES", "Simple Holt", "Additive Damped Trend Holt SES" )
+AIC <- c("NA", "NA", "-90.15879")
+BIC <- c("NA", "NA", "-81.55487")
+MASE <- c("0.8224266", "0.9397818", "0.8202932")
+p <- c("0.8721", "0.8559", "0.8385")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Checking the summaries and residuals for each model reveals that the additive damped trend Holt model produces the lowest overall MASE and can be considered to be the best overall model.
+
+\newpage
+
+## State Space Models
+
+ANN, MNN, AAN, and MMN state space models are created for the RBO series and their residuals and summaries are discussed below:
+
+```{r warning=FALSE}
+
+etsAN = ets(rbo, model="ANN")
+summary(etsAN)
+checkresiduals(etsAN)
+
+etsMN = ets(rbo, model="MNN")
+summary(etsMN)
+checkresiduals(etsMN) 
+
+etsAA = ets(rbo, model="AAN")
+summary(etsAA)
+checkresiduals(etsAA)
+
+etsMM = ets(rbo, model="MMN")
+summary(etsMM)
+checkresiduals(etsMM)
+
+etsMA = ets(rbo, model="MAN")
+summary(etsMA)
+checkresiduals(etsMA)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("ANN State Space", "MNN State Space", "AAN State Space", "MMN State Space", "MAN State Space")
+AIC <- c("-96.01071", "-96.69180", "-92.34177", "-92.87345", "-92.38368")
+BIC <- c("-91.70874", "-92.38984", "-85.17183", "-85.70351", "-85.21374")
+MASE <- c("0.840473", "0.8460683", "0.8511657", "0.8761064", "0.8872188")
+p <- c("0.8724", "0.8917", "0.8786", "0.8875", "0.825")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+The lowest MASE value is seen in the ANN state space model, but the lowest AIC and BIC are observed in the AAN model. All the models do not seem to have serial correlation due to the failure to reject the null hypothesis of serial correlation using the Ljung-Box test. The AAN state space model is chosen to be the best due to its lower AIC and BIC values and since its MASE is not too much higher than that of th ANN model.
+
+```{r warning=FALSE}
+
+A = ts(matrix(NA,3,5000),start=2015,frequency = 1)
+
+M = 5000
+for (i in 1:M){
+  A[,i] = simulate(etsAA , initstate = etsAA$states[30,] , nsim = 3)
+}
+
+plot(rbo , ylim=range(rbo,A) , xlim=c(1984,2017),
+     ylab="FFD" , xlab="Year", main="5000 simulated future sample paths")
+for(i in 1:M){
+  lines(A[,i],col="gray")
+}
+
+# interval estimates and bounds
+
+N = 3
+xlim=c(1984,2017)
+
+Pi = array(NA, dim=c(N,2))
+avrg = array(NA, N)
+
+# Calculate the interval estimates and mid point
+for (i in 1:N){
+  Pi[i,] = quantile(A[i,], type=8, prob=c(.05,.95))
+  avrg[i] = mean(A[i,]) # This would be median as well
+}
+
+# Create ts objects for plotting
+Pi.lb = ts(Pi[,1],start=end(rbo),f=1)
+Pi.ub = ts(Pi[,2],start=end(rbo),f=1)
+avrg.pred = ts(avrg,start=end(rbo),f=1)
+
+plot(rbo,xlim=xlim , ylim=range(rbo,A),ylab="Y",xlab="Year", main="
+4 weeks ahead predictions")
+lines(Pi.lb,col="blue", type="l")
+lines(Pi.ub,col="red", type="l")
+lines(avrg.pred,col="green", type="l")
+legend("topleft", lty=1, pch=1, col=c("black","blue","red","green"), text.width =2, cex=0.4,
+       c("Data","5% lower limit","95% upper limit","Mean prediction"))
+```
+5000 simulated future paths are plotted to obtain an idea of the potential range of forecasts that could be obtained. The simulated paths demonstrate a periodic rise and fall. Plotting the forecast along with the confidence intervals shows a roughly constant forecast (green) at around 0.71. The confidence intervals seem quite wide, ranging from roughly 0.65 till 0.78 and both bounds seem equidistant from the forecast.
+
+## Task 3 Part B
+
+A drought period occurring from 1996 onwards implies that an intervention point begins at that year. Therefore, a dynamic linear model can be implemented with an intervention point set to in the year 1996. Multiple dynamic linear models are implemented based on various combinations of Y(t), step functions, trend, and their lags. The summaries and residuals of these models are compared and the ideal model is chosen based on factors such as the model p-value, R-squared, AIC, BIC, and results of the Breusch-Godfrey test. 
+
+```{r}
+Y.t = rbo
+T = 13
+S.t = 1*(seq(Y.t) >= T)
+S.t.1 = Lag(S.t,+1)
+
+model1 = dynlm(Y.t ~ L(Y.t , k = 1 ) + S.t + trend(Y.t))
+summary(model1)
+checkresiduals(model1)
+
+model2 = dynlm(Y.t ~ L(Y.t , k = 2 ) + S.t + trend(Y.t))
+summary(model2)
+checkresiduals(model2)
+
+model3 = dynlm(Y.t ~ L(Y.t , k = 1 ) + S.t + S.t.1 + trend(Y.t))
+summary(model3)
+checkresiduals(model3)
+
+model4 = dynlm(Y.t ~ L(Y.t , k = 1 ) + S.t)
+summary(model4)
+checkresiduals(model4)
+
+model5 = dynlm(Y.t ~ L(Y.t , k = 1 ) + L(Y.t , k = 2 ) + S.t+ S.t.1)
+summary(model5)
+checkresiduals(model5)
+
+model6 = dynlm(Y.t ~ L(Y.t , k = 1 ) + L(Y.t , k = 2 ) + S.t.1)
+summary(model6)
+checkresiduals(model6)
+
+model7 = dynlm(Y.t ~ L(Y.t , k = 1 ) + L(Y.t , k = 2 ) + L(Y.t , k = 3 )
+               + S.t.1)
+summary(model7)
+checkresiduals(model7)
+
+model8 = dynlm(Y.t ~ L(Y.t , k = 1 ) + L(Y.t , k = 2 ) +
+                 L(Y.t , k = 3 ) + S.t + S.t.1 + trend(Y.t))
+summary(model8)
+checkresiduals(model8)
+
+model9 = dynlm(Y.t ~ L(Y.t , k = 1 ) + L(Y.t , k = 2 ) +
+                 L(Y.t , k = 3 ) + L(Y.t , k = 4 ) + S.t + S.t.1 + trend(Y.t))
+summary(model9)
+checkresiduals(model9)
+
+aic = AIC(model1, model2, model3, model4, model5, model6, model7, model8, model9)
+bic = BIC(model1, model2, model3, model4, model5, model6, model7, model8, model9)
+
+aic[order(aic$AIC),]
+bic[order(bic$BIC),]
+
+
+```
+```{r}
+modelno <- c("Model 1", "Model 2", "Model 3", "Model 4", "Model 5", "Model 6", "Model 7", "Model 8", "Model 9")
+models <- c("Y(1) + S(t) + trend", "Y(2) + S(t), trend", "Y(1) + S(t) + S(1), trend", "Y(t) + S(t)", "Y(1) + Y(2) + S(t) + S(1)", "Y(1) + Y(2) + S(1)", "Y(1) + Y(2) + Y(3) + S(1)", "Y(1) + Y(2) + Y(3) + s(t) + S(1) + trend", "Y(1) + Y(2) + Y(3) + Y(4) + s(t) + S(1) + trend")
+p <- c("2.073e-06", "1.688e-06", "6.329e-06", "1.387e-06", "4.286e-06", "0.0008917", "0.00194", "7.469e-05", "6.317e-05")
+rsq <- c("0.6297", "0.6498", "0.6281", "0.6045", "0.6546", "0.4143", "0.4231", "0.6334", "0.6842")
+bg <- c("0.521","0.87","0.3165","0.8814","0.9192","0.3783","0.5371","0.05019","0.5751")
+
+s<- data.frame(cbind(modelno, models, p, rsq, bg))
+colnames(s)<- c("**Model**", "Description", "**Model p-value**", "**R-squared value**","**Breusch-Godfrey p-value**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Based on the results obtained, Model 9 is selected as the best model from the list as it provides the best compromise between low p-value, relatively high R-squared value,  relatively low AIC and BIC, and a relatively high p-value for the Breusch-Godfrey test implying that it does not contain serial correlation. The intercept and the step function S(t) are significant in Model 9. 
+
+The forecast for Model 9 is created below, and shows that the RBO is expected to climb between 2015 and 2018 in the 3 years ahead forecast.
+
+```{r}
+q = 3
+n = nrow(model9$model)
+
+rbo.frc = array(NA , (n + q))
+rbo.frc[1:n] = Y.t[5:length(Y.t)]
+
+trend = array(NA,q)
+trend.start = model9$model[n,"trend(Y.t)"]
+trend = seq(trend.start , trend.start + q, 1)
+
+for (i in 1:q){
+  data.new = c(1,rbo.frc[n-1+i],rbo.frc[n-2+i],
+               rbo.frc[n-3+i],rbo.frc[n-3+i],1,1,trend[i])
+  rbo.frc[n+i] = as.vector(model9$coefficients) %*% data.new
+}
+
+plot(Y.t,xlim=c(1991,2018),ylab='RBO',xlab='Year',
+     main = "Dynamic Linear Model: 3 years ahead forecast for RBO")
+lines(ts(rbo.frc[(n+1):(n+q)],start=c(2015,1),frequency = 1),col="red")
+```
+
+## Conclusion
+
+This report concerned the implementation of various forecasting models in R for three different time series forecasting tasks and validating each of those models to identify the best forecasting model for each application. The selection of models was based on multiple test statistics updating from the model summaries and residuals, including MASE, p-value, AIC, BIC, and the results of serial correlation tests.
+
+The first task involved finding the ideal forecasting model to predict mortality rates in Paris, France based on several climate variables which acted as predictors for the mortality rates time series. The data set provided spanned between the years 2010 till 2020 and was weekly in frequency. Where possible, multivariate models were implemented. Polynomial, Koyck, finite DLM, exponential smoothing, and state space models were implemented and the ideal implementation was found to be either the Simple SES or the ANN state space model, since both model demonstrated similar performance.
+
+The second task involved finding the ideal forecasting model to predict the first flowering day, or FFD, which is a variable that is impacted by several climate conditions such as rainfall, temperature, radiation, and relative humidity. The data set spanned between the years 1984 and 2014 and was annual in frequency. For this task, only univariate models were explored. Polynomial, Koyck, finite DLM, exponential smoothing, and state space models were implemented and the ideal implementation was found to be the Additive Damped Trend Holt SES model due to its relatively low MASE as well displaying improved performance compared to the other models.
+
+Part A of the third task involved finding the ideal forecasting model to predict the Rank-based Order similarity metric, or RBO, which is a variable impacted by climate conditions including temperature, rainfall, radiation, and relative humidity, which act as predictors for RBO. The dataset spanned between the years 1983 and 2014 and was annual in frequency. For this task, only univariate models were explored. Polynomial, Koyck, finite DLM, exponential smoothing, and state space models were implemented and the ideal implementation was found to be the ARDL model using the temperature variable as a predictor for RBO.
+
+Part B of the third task involved the same data set as part A of task 3, but given the additional context of a drought that took place between 1996 till 2009. This information allows for the implementation of a dynamic linear model with an intervention point set to 1996. Various combinations of Y(t), step functions, trend, as well as their lags were used in the implementations and their summaries and residuals were studied. The ideal dynamic linear model was identified to be the 9th model that was tested, which incorporated the first four lags of Y(t), the step function and its first lag, and trend in the final model.
