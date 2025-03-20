@@ -1,0 +1,554 @@
+---
+title: |
+       |
+       |
+       |
+       | MATH1307 - Forecasting 
+       |
+       |
+       |
+       | Assignment 2
+       
+author: |
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | 
+   | Kavinda Goonesekere
+   | S3987368
+date: "   2023-09-10"
+output: html_document
+---
+
+<style type="text/css">
+
+h1.title {
+  font-size: 58px;
+  text-align: center;
+}
+
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 34px;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 34px;
+}
+body{
+  font-family: Helvetica;
+  font-size: 14pt;
+}
+</style>
+
+\newpage
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tseries)
+library(TSA)
+library(forecast)
+library(x12)
+library(urca)
+library(dLagM)
+library(dplyr)
+library(car)
+library(dynlm)
+library(Hmisc)
+library(xts)
+```
+
+## Introduction
+
+This report concerns the implementations of two data analysis tasks with two separate datasets. The tasks to be carried out are detailed below:
+
+* **Task 1:** Analysing and forecasting the amount of solar radiation received by a specific location by providing the optimal 2 years ahead forecast in terms of MASE. The models to be used are time series regression models, exponential smoothing, and state-space models. **Dynamic linear models were not explored in this report since there was no obvious intervention point in the time series for either variable.**
+* **Task 2:** Analysing the correlation between quarterly Residential Property Price Index (PPI) in Melbourne and quarterly population change over the previous quarter in Victoria for the period between September 2003 and December 2016. The objective of the task is to determine whether the correlation between the two series is spurious. 
+
+
+\newpage
+## Task 1
+
+## Reading Data and Pre-processing
+
+The dataset is read in and each variable is converted to a time series object. Both solar radiation and precipitation series are plotted along with points denoting each month in order to identify any seasonality. The plots for both solar radiation and precipitation demonstrate seasonal peaks and seem to be roughly stationary since the variance and mean don't seem to change much over time.
+```{r warning=FALSE}
+setwd("C:/Work/Master in Analytics/Semester 2/Forecasting/Forecasting Assignment 2")
+solardata <- read.csv("data1.csv")
+head(solardata)
+
+solar.ts <- ts(solardata$solar, start=c(1960,1), frequency=12)
+ppt.ts <- ts(solardata$ppt, start=c(1960,1), frequency=12)
+
+
+plot(solar.ts, ylab='Monthly averages of solar radiation',xlab='Year',
+     main = "Time series plot of monthly averages of solar radiation")
+points(y=solar.ts, x=time(solar.ts), pch=as.vector(season(solar.ts)))
+
+plot(ppt.ts, ylab='Monthly averages of precipitation',xlab='Year',
+     main = "Time series plot of monthly averages of precipitation")
+points(y=ppt.ts, x=time(ppt.ts), pch=as.vector(season(ppt.ts)))
+
+```
+
+\newpage
+
+## Exploring Stationarity of Variables
+
+Plotting the ACF and PACF for solar radiation and precipitation demonstrates similar results for both variables. Both variables demonstrate an ACF with a periodic rise and fall, with most peaks lying above the 95% confidence interval, and the PACF plot shows multiple significant lags. This suggests that the series is non-stationary. 
+
+```{r warning=FALSE}
+par(mfrow=c(1,2))
+acf(solar.ts, max.lag = 24, main="Solar Radiation ACF")
+pacf(solar.ts, max.lag = 24, main = "Solar Radiation PACF")
+
+par(mfrow=c(1,2))
+acf(ppt.ts, max.lag = 24, main="Precipitation ACF")
+pacf(ppt.ts, max.lag = 24, main = "Precipitation PACF")
+
+```
+
+For further confirmation of non-stationarity in the series, an Augmented Dicky-Fuller test is performed on the solar data series. The absolute value of the test statistic is higher than the absolute of the critical values at 1%, 5% and 10% significance levels. The p-value is quite low (2.2e-16), all suggesting that the series is stationary due to the null hypothesis being rejected.
+
+Further confirmation can be obtained using a Phillips-Perron unit root test in addtion to the ADF test. The Phillips-Perron test produces a Z-tau test statistic of -8.4301 which is more extreme than the critical values at 1%, 5%, and 10% levels. This implies a rejection of the null hypothesis once again, and suggests that the series is indeed stationary.
+
+Testing precipitation for non-stationarity using an Augmented Dicky-Fuller test and a Phillips-Perron unit root test produces test statistics of -7.6 and 7.4 respectively, which are both more extreme than their given critical values at 1%, 5% and 10% significance levels. Therefore, it is possible to confirm that the series is stationary.
+
+```{r warning=FALSE}
+adf.solar = ur.df(solar.ts, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.solar)
+pp.solar = ur.pp(solar.ts, type = "Z-tau", lags = "short")
+summary(pp.solar)
+
+adf.ppt = ur.df(ppt.ts, type = "none", lags = 1, selectlags = "AIC")
+summary(adf.ppt)
+pp.ppt = ur.pp(ppt.ts, type = "Z-tau", lags = "short")
+summary(pp.ppt)
+```
+\newpage
+
+## Applying Transformations to Solar Raidation 
+
+Log transformations are performed to the solar radiation series and the precipitation series to see if any improvements occur to the adf test. This produces a p-value of 0.01 for both solar radiation and precipitation.
+
+```{r warning=FALSE}
+# Trying a log transformation to make the series stationary
+log_solar = log(solar.ts)
+plot(log_solar,ylab='Log of monthly averages of solar radiation',xlab='Year',type='o',
+     main = "Time series plot of log of monthly averages of solar radiation")
+adf.test(log_solar)
+
+log_ppt = log(ppt.ts)
+plot(log_ppt,ylab='Log of monthly averages of precipitation',xlab='Year',type='o',
+     main = "Time series plot of log of monthly averages of precipitation")
+adf.test(log_ppt)
+```
+
+\newpage
+
+## Verifying Seasonality
+
+The seasonal components of the solar radiation series are explored using the X-12 ARIMA and stl functions. THe X-12 ARIMA function produces a plot with a seasonally adjusted series which has much less variation compared to the original series, suggesting that there are indeed seasonal components in the series. The results of the STL function show a sizable seasonal component with a rise and fall roughly occuring every year.
+
+This is further confirmed by using the seasadj() function to obtain a seasonally adjusted series for solar radiation, which flattens out the periodic components of the series. 
+
+Using the X-12 ARIMA function on the precipitation series yields similar results, where the seasonally adjusted series looks much flatter compared to the original. The STL function decomposition reveals a seasonal component here as well, and the plot obtained using the seasadj() function displays a similar result to earlier with the periodic components of the series being flattened out.
+
+```{r warning=FALSE}
+# solar: decomposing and adjusting seasonality
+
+decomp_solar_x12 = x12(solar.ts)
+plot(decomp_solar_x12, sa=TRUE, trend=TRUE)
+
+decomp_solar = stl(solar.ts, t.window = 12, s.window = "periodic", robust=TRUE)
+plot(decomp_solar)
+
+solar_seasadj = seasadj(decomp_solar)
+plot(solar_seasadj, main = "Seasonally adjusted solar radiation")
+
+# precipitation: decomposing and adjusting seasonality
+
+decomp_ppt_x12 = x12(ppt.ts)
+plot(decomp_ppt_x12, sa=TRUE, trend=TRUE)
+
+decomp_ppt = stl(ppt.ts, t.window = 12, s.window = "periodic", robust=TRUE)
+plot(decomp_ppt)
+
+ppt_seasadj = seasadj(decomp_ppt)
+plot(ppt_seasadj, main = "Seasonally adjusted precipitation")
+
+```
+
+\newpage
+
+## Correlating Predictor Variables with Dependent Variable
+
+Since precipitation is to be used as a predictor for solar radiation, it would be useful to determine the correlation between the two series. This may be achieved visually by plotting the scaled series together on the same plot, so the solar radiation series is scaled and plotted along with the scaled precipitation series. 
+
+Close inspection of the plot reveals that peaks and troughs in the solar radiation series are immediately preceded by similar peaks and troughs in the precipitation series. This seems to imply that precipitation does indeed predict the future observations for solar radiation and is a suitable predictor variable. 
+
+```{r warning=FALSE}
+solardata.ts <- ts(solardata, start=c(1960,1), frequency=12)
+solardata_scaled = scale(solardata.ts)
+plot(solardata_scaled, plot.type="s", col=c("blue", "red"), ylab="Scaled Data")
+legend("topright", lty=1, col=c("blue", "red"), c("Solar Radiation", "Precipitation"))
+```
+
+Since a visual confirmation of the correlation between predictor and dependent variables is insufficient, the variables can be correlated using the cor() function in order to obtain a numerical representation of correlation. Obtaining the correlation values shows that precipitation and solar radiation have a correlation value of -0.45. The negative correlation implies that whenever there is precipitation, there is less solar radiation and vice-versa, which is a sensible conclusion.
+
+```{r warning=FALSE}
+#correlate variables
+cor(solardata.ts)
+
+```
+
+\newpage
+
+## Fitting Distributed Lag Models 
+
+### Polynomial DLM
+
+A polynomial DLM is first fitted using the polyDlm() function, using precipitation as a predictor variable to predict solar radiation. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10, and a polynomial order of 2.
+
+```{r warning=FALSE}
+#PolyDLM 
+finiteDLMauto(x = as.vector(ppt.ts), y = as.vector(solar.ts), q.min = 1, q.max = 10,
+              model.type = "poly", error.type = "AIC", trace = TRUE)
+model.poly = polyDlm(x = as.vector(ppt.ts), y = as.vector(solar.ts), q = 10, k = 2, show.beta = TRUE)
+summary(model.poly)
+checkresiduals(model.poly$model)
+MASE(model.poly)
+```
+
+The summary of the polynomial DLM model shows a low p-value of 2.2e-16, which suggests that the model is significant. However, a low R-squared value of 0.2992 means that the model does not explain the data well. Additionally, the z values are significant for t, as well as the first and second lags for t.
+
+The Breusch-Godfrey test for serial correlation produces a low p-value of 2.2e-16, which means that there is evidence of serial correlation in the model, making it less suitable to model solar radiation. 
+
+Analysing the residuals for the polynomial model shows that the residuals are relatively large and are not normally distributed due to the residuals being somewhat right skewed, suggesting that the model does not account for the data well and the errors in the model are not random. The ACF plot also shows peaks above the 95% confidence interval, suggesting that this is an inadequate model to describe solar radiation.
+
+The MASE value for the polynomial model is 1.59, which is unsatisfactory since the fact that it is larger than 1 implies that it performs worse than a naive forecast in terms of mean absolute error.
+
+### Koyck (Geometric) DLM
+
+```{r warning=FALSE}
+# Kocyk 
+model.Koyck = koyckDlm(x = as.vector(ppt.ts), y = as.vector(solar.ts), intercept = TRUE)
+summary(model.Koyck)
+checkresiduals(model.Koyck$model)
+MASE(model.Koyck)
+
+model.Koyck.adj = koyckDlm(x = as.vector(ppt_seasadj), y = as.vector(solar_seasadj), intercept = TRUE)
+summary(model.Koyck.adj)
+checkresiduals(model.Koyck.adj$model)
+
+MASE(model.Koyck.adj)
+```
+
+A Koyck DLM is fitted using the koyckDlm() function, using precipitation as a predictor variable to predict solar radiation. The summary of the Koyck model shows a very low p-value of 2.2e-16, which suggests that the model is significant. A decent R-squared value of 0.7591 reveals that the model explains a good proportion of the data well. 
+
+The first lag of the Y value is significant and the X value at t are both significant, meaning that both are suitable predictor for solar radiation. 
+
+The Ljung-Box test produces a low p-value of 2.2e-16, which means that there is evidence of serial correlation in the model, making it less suitable to model solar radiation.
+
+Analysing the residuals for the Koyck model shows that the residuals are relatively small compared to the polynomial model and are roughly normally distributed, suggesting that the model accounts for the data better than the polynomial model and the errors in the model are random. The ACF plot shows periodic peaks which extend beyond the 95% confidence interval, suggesting that the series is seasonal.
+
+The MASE of the Koyck model was found to be 1.03, which makes it marginally worse than a naive forecast in terms of mean absolute error.
+
+Another Koyck model is created using the seasonally adjusted versions of solar radiation and precipitation. This model produces a low p-value of 2.2e-16 and an even higher R-squared value of 0.8684, which implies that the Koyck model using seasonally adjusted predictor and output explains the series better than earlier. The residuals of the adjusted Koyck model are also normally distributed with lower variance compared to earlier. This supports the theory that this model explains the data better.
+
+The MASE of the adjusted Koyck model was found to be 0.98, which makes it marginally better than a naive forecast in terms of mean absolute error.
+
+The adjusted Koyck model also produced a p-value of 2.2e-16 for the Ljung-Box test, which implies that there is serial correlation in the data.
+\newpage
+
+### Finite DLM
+
+```{r warning=FALSE}
+# Finite DLM
+finiteDLMauto(x = as.vector(ppt.ts), y = as.vector(solar.ts), q.min = 1, q.max = 10,
+              model.type = "dlm", error.type = "AIC", trace = TRUE)
+model.dlm = dlm(x = as.vector(ppt.ts), y = as.vector(solar.ts), q = 10)
+summary(model.dlm)
+checkresiduals(model.dlm$model)
+MASE(model.dlm)
+```
+A finite DLM is fitted using the dlm() function. Prior to fitting, the ideal lag value is found using the finiteDLMauto() function, which is made to generate multiple models with q ranging from 1 to 10 and uses AIC error to determine the suitability of each model. The results of finiteDLMauto() suggest that the ideal value for q is 10.
+
+The summary of the finite DLM shows a high p-value of 0.2962, which suggests that the model is not significant. Additionally, a low R-squared value of 0.2962 means that the model does not explain the data well. Only x(t) and its 10th lag are significant, meaning that only those two lag components are satisfactory predictors of solar radiation.
+
+The Breusch-Godfrey test for serial correlation produces a low p-value of 2.2e-16, which means that there is evidence of serial correlation in the model, making it less suitable to model solar radiation. 
+
+Analysing the residuals for the finite DLM shows that the residuals are relatively large and are not normally distributed since the reesiduals are somewhat right skewed, suggesting that the model does not account for the data well and the errors in the model are not random. The ACF plot also shows peaks above the 95% confidence interval, with the the first few peaks/lags being the largest. This suggests that this is an inadequate model to describe solar radiation. 
+
+The MASE of the DLM model is seen to be 1.58, which is almost as unsatisfactory as the polynomial model, meaning that a naive forecast performs better in terms of absolute mean error.
+
+\newpage
+
+### ARDL Model
+
+```{r warning=FALSE}
+#ARDL
+columns = c("p","q","AIC","BIC") 
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:10){
+  for(j in 1:10){
+    model.ARDL = ardlDlm(x = as.vector(ppt.ts), y = as.vector(solar.ts), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL <- ardlDlm(x = as.vector(ppt.ts), y = as.vector(solar.ts), p = 10, q = 10)
+summary(model.ARDL)
+checkresiduals(model.ARDL$model)
+MASE(model.ARDL)
+
+# seasonally adjusted
+df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(df) = columns
+
+for(i in 1:10){
+  for(j in 1:10){
+    model.ARDL = ardlDlm(x = as.vector(ppt_seasadj), y = as.vector(solar_seasadj), p = i, q = j)
+    new_row = data.frame(p = i, q=j, AIC=AIC(model.ARDL$model), BIC=BIC(model.ARDL$model))
+    df = bind_rows(df, new_row)
+  }
+}
+
+df[order(df$AIC),]
+
+model.ARDL.adj <- ardlDlm(x = as.vector(ppt_seasadj), y = as.vector(solar_seasadj), p = 7, q = 10)
+summary(model.ARDL.adj)
+checkresiduals(model.ARDL.adj$model)
+MASE(model.ARDL.adj)
+
+```
+
+An ARDL model is constructed using the ardlDlm() function. Before fitting the model, the optimal lag value for the independent series (p) and the optimal lag value for the dependent series (q) are determined through a process of multiple iterations. In each iteration, a new model is created with different p and q values. The AIC and BIC errors are computed for each model to assess their suitability. Based on the outcomes of this procedure, it is recommended that the optimal value for p is 10, while the optimal value for q is also 10.
+
+The summary of the ARDL model shows a very low p-value of 2.2e-16, which suggests that the model is significant. A high R-squared value of 0.9444 makes it better than the seasonally adjusted Koyck model and reveals that the model explains most of the data well. 
+
+The 6th and 7th lags of the predictor as well as the 1st, 3rd, 4th, 5th, 6th, 7th, 9th, and 10th lags of solar radiation are significant.
+
+The Breusch-Godfrey test produces a low p-value of 1.755e-08, which rejects the null hypothesis of independently distributed data. Therefore, it is possible to conclude that there is serial correlation in the model.
+
+Analysing the residuals for the ARDL model shows that the residuals are relatively small compared to the polynomial model and are roughly normally distributed, suggesting that the model accounts for the data well and the errors in the model are random. The ACF plot shows that most of the peaks are within the 95% confidence interval, with 5 peaks lying outside the interval. Finally, the MASE is calculated for the model and is seen to be 0.91, making it marginally better than a naive forecast.
+
+Repeating the above procedure for the seasonally adjusted precipitation and solar radiation series produces a similar p-value of 2.2e-16 and a lower R-squared value of 0.8922. With this model, the 6th and 7th lags of the predictor variable are significant in addition to the 1st, 2nd, 4th, 5th, 8th, and 9th lags of solar radiation. Similar results are obtained for the residuals, with the residuals looking roughly normally distributed and a Breusch-Godfrey test p-value of 0.01834. This is higher than last time but still shows that serial correlation exists in the series. Overall the original ARDL model seems to explain the data better than the seasonally adjusted ARDL model due to its higher R-squared value. The MASE for the seasonally adjusted model is also 0.91.
+
+## Forecasting with Time Series Regression Models 
+
+Two years ahead forecasts are created for the polynomial, Koyck, and ARDL models. The resulting plot shows that Koyck and polynomial models produces somewhat similar forecasts that have seasonal rises and dips similar to the historical data. However, the ARDL forecast sits around the mean level of the other two forecasts and remains mostly constant.
+
+```{r warning=FALSE}
+predictor <- read.csv("data.x.csv")
+length(model.dlm)
+model.poly.Frc = dLagM::forecast(model.poly, x = t(predictor), h=24)
+model.koyck.Frc = dLagM::forecast(model.Koyck, x = t(predictor), h=24)
+model.ARDL.Frc = dLagM::forecast(model.ARDL, x = t(predictor), h=24)
+
+plot(ts(c(as.vector(solar.ts), model.poly.Frc$forecasts), start = 1960, frequency = 12), type="o", col="red", ylim=c(0, 60),
+     ylab="Solar radiation", xlab="Year", main="Solar radiation with 2 years ahead of forecasts")
+lines(ts(c(as.vector(solar.ts), model.koyck.Frc$forecasts), start = 1960, frequency = 12), col="green",type="o")
+lines(ts(c(as.vector(solar.ts), model.ARDL.Frc$forecasts), start = 1960, frequency = 12), col="purple",type="o")
+lines(ts(as.vector(solar.ts), start = 1960, frequency = 12),col="black",type="o")
+legend("topleft",lty=1, pch = 1, text.width = 11, col=c( "red", "green","purple", "black"), 
+       c("Polynomial", "Koyck", "ARDL", "Warming"))
+```
+
+\newpage
+
+## Exponential Smoothing Models
+
+Three types of exponential smoothing models may be created for the solar radiation dataset. These are listed as follows:
+
+* **Simple exponential smoothing model:** Best for series with no trend or seasonality
+* **Holt's linear trend model:** Best for series with seasonal components
+* **Holt-Winter's trend and seasonality model:** Best for series with both trend and seasonal components
+
+The three above models are created for the solar radiation series using the ses() and holt() functions.
+```{r warning=FALSE}
+fit1.ses <- ses(solar.ts, initial="simple", h=24)
+summary(fit1.ses)
+checkresiduals(fit1.ses)
+
+fit2.holt <- holt(solar.ts, initial="simple", h=24) 
+summary(fit2.holt)
+checkresiduals(fit2.holt)
+
+fit3.holt <- holt(solar.ts, damped=TRUE, initial="simple", h=24) # Fit with additive damped trend
+summary(fit3.holt)
+checkresiduals(fit3.holt)
+
+
+plot(solar.ts, type="l", ylab="Solar radiation", xlab="Year", fcol="white", plot.conf=FALSE)
+lines(fitted(fit1.ses), col="blue")
+lines(fitted(fit2.holt), col="red")
+lines(fitted(fit3.holt), col="green")
+lines(fit1.ses$mean, col="blue", type="l")
+lines(fit2.holt$mean, col="red", type="l")
+lines(fit3.holt$mean, col="green", type="l")
+legend("topleft", lty=1, col=c("black","blue","red","green"),
+       c("Data","SES", "Holt's linear trend", "Additive damped trend"))
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+library(dplyr)
+library(kableExtra)
+
+models <- c("Simple SES", "Simple Holt", "Additive Damped Trend Holt SES" )
+AIC <- c("NA", "NA", "5932.524")
+BIC <- c("NA", "NA", "5959.477")
+MASE <- c("0.636771", "0.4610361", "0.433476")
+p <- c("2.2e-16", "2.2e-16", "2.2e-16")
+res <- c("Not normal", "Not normal", "Normal")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p, res))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**", "**Residual Normality**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+Checking the summaries and residuals for each model reveals that all the models are significant with p-values of 2.2e-16. The additive damped trend model has the lowest MASE from the three models and the most normally distributed residuals based on the residual plots. This suggests that the additive damped trend model is the best model for solar radiation thus far. 
+
+\newpage
+
+## State Space Models
+
+```{r warning=FALSE}
+
+fit5.hw <- hw(solar.ts,seasonal="additive", h=24)
+summary(fit5.hw)
+checkresiduals(fit5.hw)
+
+fit6.hw <- hw(solar.ts,seasonal="additive",damped = TRUE, h=24)
+summary(fit6.hw)
+checkresiduals(fit6.hw)
+
+fit7.hw <- hw(solar.ts,seasonal="multiplicative", h=24)
+summary(fit7.hw)
+checkresiduals(fit7.hw)
+
+fit8.hw <- hw(solar.ts,seasonal="multiplicative",exponential = TRUE, h=24)
+summary(fit8.hw)
+checkresiduals(fit8.hw)
+
+fit1.etsA = ets(solar.ts, model="ANN")
+summary(fit1.etsA)
+checkresiduals(fit1.etsA)
+
+fit1.etsM = ets(solar.ts, model="MNN")
+summary(fit1.etsM)
+checkresiduals(fit1.etsM) 
+
+fit2.etsA = ets(solar.ts, model="AAN")
+summary(fit2.etsA)
+checkresiduals(fit2.etsA)
+
+fit2.etsM = ets(solar.ts, model="MAN", damped = TRUE)
+summary(fit2.etsM)
+checkresiduals(fit2.etsM)
+
+fit3.etsA = ets(solar.ts, model="AAA")
+summary(fit3.etsA)
+checkresiduals(fit3.etsA)
+
+fit3.etsM = ets(solar.ts, model="MAA")
+summary(fit3.etsM)
+checkresiduals(fit3.etsM)
+
+fit4.etsM = ets(solar.ts, model="MAM")
+summary(fit4.etsM)
+checkresiduals(fit4.etsM)
+
+fit5 = ets(solar.ts)
+summary(fit5)
+checkresiduals(fit5)
+
+```
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+
+models <- c("Holt-Winter's Additive Seasonal", "Holt-Winter's Additive Seasonal Damped", "Holt-Winter's Multiplicative Seasonal", "Holt-Winter's Multiplicative Seasonal Exponential", "ANN State Space", "MNN State Space", "AAN State Space", "MAN State Space", "AAA State Space", "MAA State Space", "MAM State Space")
+AIC <- c("5434.708", "5428.422", "6648.746", "6584.208", "6296.371", "6619.776", "5932.524", "6540.866", "5428.422", "6469.079", "5953.502")
+BIC <- c("5511.076", "5509.282", "6725.114", "6660.576", "6309.847", "6633.253", "5959.478", "6567.819", "5509.282", "6549.940", "6034.363")
+MASE <- c("0.24716", "0.2461797", "0.2233077", "0.2320404", "0.6368203", "0.6369599", "0.4334691", "0.6583987", "0.2461797", "0.3798095", "0.3222574")
+p <- c("2.2e-16", "2.2e-16", "0.03017", "0.6242", "2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16", "2.2e-16", "1.222e-11")
+res <- c("Normal", "Normal", "Normal", "Normal", "Not Normal", "Not Normal", "Normal", "Not Normal", "Normal", "Normal", "Not Normal")
+
+s<- data.frame(cbind(models, AIC, BIC, MASE, p, res))
+colnames(s)<- c("**Model**", "**AIC**", "**BIC**", "**MASE**", "**Ljung-Box p-value**", "**Residual Normality**")
+
+s %>% kbl(caption = "**Model Summary**") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+Several more models are created which are listed in the above table. Their AIC, BIC, MASE, Ljung-Box p-value, and residual normality are listed as well. It is possible to shortlist the Holt-Winter's Additive Seasonal, Holt-Winter's Multiplicative Seasonal, Holt-Winters Multiplicative Seasonal Exponential, and AAA State Space based on their low MASE values. Of these, the  Holt-Winter's Multiplicative Exponential Seasonal model is the only one that fails to reject the null hypothesis for the Ljung-Box test due to its p-value of 0.6242. This means, there is no serial correlation in the model. Holt-Winter's Multiplicative Seasonal also has a relatively high p-value of 0.03 for the Ljung-Box test but it is not high enough to reject the null hypothesis. The AAA State Space has the lowest AIC value as well as the lowest BIC value. All residual distributions for the shortlisted models are normally distributed. The ANN, MNN, MAN, and MAM state space models have non-normal distributions in their residuals as well as relatively high AIC and BIC values compared to the shortlisted models. 
+
+Based on these, the final model chosen was the Holt-Winter's Multiplicative Exponential Seasonal model due to its overall combination of no serial correlation and low MASE compared to the other models.
+
+```{r warning=FALSE}
+upper.95.int = fit8.hw$upper[,2]
+lower.95.int = fit8.hw$lower[,2]
+centre = fit8.hw$mean
+
+plot(solar.ts, xlim = c(1960,2016), ylim = c(0,75),
+     ylab="Solar Radiation",
+     main = "Original series, forecasts and 95% forecast interval for the solar radiation series",
+     cex.main=0.75)
+lines(centre, col = "red")
+lines(upper.95.int, col = "blue")
+lines(lower.95.int, col = "blue")
+```
+
+Plotting the forecast along with the confidence intervals shows a forecast (red) that appears seasonal in nature similar to historical data. THe confidence intervals seem quite wide, especially the upper bound.
+## Task 2
+
+The objective of this task is to identify any spurious correlation that may exist between the Residential Property Price Index (PPI) in Melbourne and the quarterly population change over the previous quarter in Victoria. One initial way to determine this visually is by plotting the two series together to see if there are any similarities in the trends for both series. The plot obtained shows that the PPI and population change do seem correlated since they follow a similar trend, which may cause spurious correlation. 
+
+This is further confirmed by plotting the cross-correlation  function (CCF) for the two series. The result of the CCF function demonstrates a clear case of spurious correlation since almost all the peaks lie beyond the 95% confidence intervals. Thus, it is possible to conclude that there xists spurious correlation between the two series.
+
+In order to remove the effects of cross correlation between the series, pre-whitening can be applied to both using the prewhiten() function. Pre-whitening attempts to remove dependence between the two input series to create a stationary series. Prior to applying the function, the second-order differences are obtained for both PPI and population change. These are then fed to the prewhiten() function and the new CCF is plotted.
+
+Studying the new CCF plot shows that traces of cross-correlation are lost after pre-whitening. All the CCF peaks lie within the 95% confidence intervals and no obvious pattern is visible in the CCF plot.
+
+```{r warning=FALSE}
+ppidata <- read.csv("data2.csv")
+head(ppidata)
+
+ppidata.ts <- ts(ppidata, start=c(2003,9), frequency=4)
+ppi.ts <- ppidata.ts[,2]
+pop.ts <- ppidata.ts[,3]
+ppi.joint=ts.intersect(ppi.ts,pop.ts)
+plot(ppi.joint, yax.flip=T)
+
+ccf(as.vector(ppi.joint[,1]), as.vector(ppi.joint[,2]),
+    ylab='CCF', main = "Sample CCF between")
+
+me.dif=ts.intersect(diff(diff(ppi.ts,4)),diff(diff(pop.ts,4)))
+prewhiten(as.vector(me.dif[,1]),as.vector(me.dif[,2]),ylab='CCF',
+          main="Sample CFF after prewhitening ")
+
+```
+
+\newpage
+
+## Conclusion
+
+The procedures explored in this report explored various models including time series regression, exponential smoothing, and state-space models. It was discovered that both solar radiation and precipitation were both stationary since the ADF and Phillips-Perron tests had their null hypotheses rejected. Further exploration of the data showed that there were seasonal components in the solar radiation and precipitation series. Next, various Distributed Lag Models, including the polynomial DLM, Koyck DLM, finite DLM, and ARDL model, were fitted these were later analysed by interpreting their summaries and residuals. Analysing the diagnostics from each model revealed that, for the solar radiation series, the ARDL model was the best time series regression model due to its goodness of fit and relatively low MASE compared to other models. The Koyck model was a close second with marginally less significant p-value and slightly higher residuals. Both the polynomial and finite DLM models were not significant and had low R-squared values, failing to describe the data properly. 
+
+Next, Holt-Winter's models and state space models were implemented for the series, producing various models based on whether the errors, trend, and seasonality were included, additive, or multiplicative. From analysing the MASE of these models as well as their AIC and BIC values and residuals, the AAN AAA State Space model and Holt-Winter's Multiplicative Exponential Seasonal model were chosen due to low MASE, AIC, BIC and normal residual distributions.
+
+The purpose of the next task was to identify spurious correlation between the Residential Property Price Index (PPI) in Melbourne and the quarterly population change over the previous quarter in Victoria. A visual look at the plots of both series showed that they do seem correlated, and the CCF plot confirmed it due to multiple peaks beyond the 95% confidence intervals. Pre-whitening the 2nd differences of the series and feeding to the prewhiten() function removed correlations between the series and produced a CCF plot which confirmed the lack of cross-correlation with the differenced series.
