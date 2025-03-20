@@ -1,0 +1,21 @@
+plot_residuals = function(model) { 
+  par(mfrow=c(3,2), mar=c(3,3,3,1))
+  e = rstandard(model)
+  plot(e, ylab="Standardised Residuals", type='o', main="Time series plot of standardised residuals")
+  abline(h=0)
+  
+  hist(e, main="Histogram of standardised residuals")
+  
+  qqnorm(e)
+  qqline(e)
+
+  acf(e, main="ACF of standardised residuals")
+  pacf(e, main="PACF of standardised residuals")
+  par(mfrow=c(1,1))
+  
+  ts = tsdiag(model, gof=15, omit.inital=F)
+  ts
+  
+  print(shapiro.test(e))
+  print(Box.test(e, lag = 6, type ="Ljung-Box", fitdf = 0))
+}
